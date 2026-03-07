@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.2.2
-// @description  Kumon Auto Grader (X / Triangle / Clear + Reapply)
+// @version      0.3.0
+// @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
 // @run-at       document-idle
@@ -39,6 +39,93 @@
     let startButton = null;
     let stopButton = null;
     let settingsPanel = null;
+
+    // --- Functionality 2: Worksheet Setter (Break Sets) ---
+    let lastToken = null;
+    let lastRegisterStudySetRequest = null;
+    let lastStudyResultRequest = null;
+    let lastStudyResult = null;
+    let lastApiResponseId = null;
+    let capturedStudents = [];
+    const REGISTER_STUDY_SET_URL = 'https://instructor2.digital.kumon.com/USA/api/ATD0010P/RegisterStudySetInfo';
+    const CLIENT = { applicationName: 'Class-Navi', version: '1.0.0.0', programName: 'Class-Navi' };
+    const PRESETS_WS = { '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1] };
+
+    function injectBreakSetCapture() {
+        if (window.__kumonBreakSetInjected) return;
+        const isKumon = (url) => String(url).indexOf('digital.kumon.com') !== -1;
+        const apiName = (url) => { const m = String(url).match(/\/([A-Za-z0-9]+)(?:\?|$)/); return m ? m[1] : url; };
+        const isStudyResult = (url) => String(url).indexOf('GetStudyResultInfoList') !== -1;
+        const isRegisterStudySet = (url) => String(url).indexOf('RegisterStudySetInfo') !== -1;
+        const isList = (url) => { const u = String(url); return u.indexOf('GetCenterAllStudentList') !== -1 || u.indexOf('StudentList') !== -1; };
+        const dispatchToken = (auth) => { if (auth) try { document.dispatchEvent(new CustomEvent('KumonBreakSetToken', { detail: { authorization: auth } })); } catch (e) {} };
+        const extractList = (data) => {
+            if (!data) return []; if (Array.isArray(data)) return data;
+            if (data.StudentInfoList && Array.isArray(data.StudentInfoList)) return data.StudentInfoList;
+            if (data.CenterAllStudentList && Array.isArray(data.CenterAllStudentList)) return data.CenterAllStudentList;
+            const first = Object.values(data).find(Array.isArray); return first || [];
+        };
+        const safeParse = (s) => { if (!s || typeof s !== 'string') return null; try { return JSON.parse(s); } catch (e) { return null; } };
+        const dispatchApi = (dir, name, url, req, res, err) => { try { document.dispatchEvent(new CustomEvent('KumonBreakSetApiCall', { detail: { dir, apiName: name, url, request: req, response: res, error: err || null } })); } catch (e) {} };
+
+        const origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+        XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+            if (name === 'Authorization' && value) { this._kumonAuth = value; dispatchToken(value); }
+            return origSetRequestHeader.apply(this, arguments);
+        };
+        const origOpen = XMLHttpRequest.prototype.open;
+        const origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(method, url) { this._kumonSpUrl = url; this._kumonSpMethod = method; return origOpen.apply(this, arguments); };
+        XMLHttpRequest.prototype.send = function(body) {
+            const xhr = this;
+            const url = xhr._kumonSpUrl || '';
+            const reqBody = typeof body === 'string' ? body : null;
+            const reqParsed = safeParse(reqBody);
+            if (isKumon(url)) {
+                dispatchApi('XHR_REQ', apiName(url), url, reqParsed || reqBody, null, null);
+                xhr.addEventListener('readystatechange', function() {
+                    if (xhr.readyState !== 4) return;
+                    let resData = null; try { resData = xhr.response != null && typeof xhr.response === 'object' ? xhr.response : (xhr.responseText ? JSON.parse(xhr.responseText) : null); } catch (e) {}
+                    dispatchApi('XHR_RES', apiName(url), url, reqParsed || reqBody, resData, null);
+                    if (resData && typeof resData === 'object') {
+                        if (isStudyResult(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetStudyResult', { detail: { requestBody: reqBody, responseData: resData } }));
+                        if (isRegisterStudySet(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetRegister', { detail: { requestBody: reqBody, authorization: xhr._kumonAuth } }));
+                        if (isList(url)) { const list = extractList(resData); if (list.length) document.dispatchEvent(new CustomEvent('KumonBreakSetStudents', { detail: { studentsJson: JSON.stringify(list) } })); }
+                    }
+                });
+            }
+            return origSend.apply(this, arguments);
+        };
+
+        const origFetch = window.fetch;
+        window.fetch = function(input, init) {
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            const reqBody = (init && init.body) ? (typeof init.body === 'string' ? init.body : null) : null;
+            const reqParsed = safeParse(reqBody);
+            let authHeader = (init && init.headers && typeof init.headers.get === 'function' ? init.headers.get('Authorization') : (init.headers && init.headers.Authorization)) || null;
+            if (authHeader) dispatchToken(authHeader);
+            if (isKumon(url)) dispatchApi('FETCH_REQ', apiName(url), url, reqParsed || reqBody, null, null);
+            return origFetch.apply(this, arguments).then(function(res) {
+                if (isKumon(url)) {
+                    const clone = res.clone();
+                    clone.json().then(function(data) {
+                        dispatchApi('FETCH_RES', apiName(url), url, reqParsed || reqBody, data, null);
+                        if (data && typeof data === 'object') {
+                            if (isStudyResult(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetStudyResult', { detail: { requestBody: reqBody, responseData: data } }));
+                            if (isRegisterStudySet(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetRegister', { detail: { requestBody: reqBody, authorization: authHeader } }));
+                            if (isList(url)) { const list = extractList(data); if (list.length) document.dispatchEvent(new CustomEvent('KumonBreakSetStudents', { detail: { studentsJson: JSON.stringify(list) } })); }
+                        }
+                    }).catch(function() {});
+                }
+                return res;
+            });
+        };
+        window.__kumonBreakSetInjected = true;
+        const script = document.createElement('script');
+        script.textContent = '// Break set capture injected';
+        (document.documentElement || document.head || document.body).appendChild(script);
+        script.remove();
+    }
 
     // Logging utility
     function log(message, type = 'info') {
@@ -1014,25 +1101,169 @@
         progressText.textContent = `${currentBoxIndex} / ${totalBoxes}`;
     }
 
+    // --- Worksheet Setter helpers ---
+    function parsePattern(str) {
+        if (!str || typeof str !== 'string') return [];
+        const s = str.trim().replace(/[,，\s]+/g, '-');
+        return s.split('-').map(x => { const n = parseInt(x, 10); return isNaN(n) || n < 1 ? 0 : n; }).filter(n => n > 0);
+    }
+    function expandPatternToTotal(patternSizes, totalPages) {
+        const baseSum = patternSizes.reduce((a, b) => a + b, 0);
+        if (baseSum <= 0 || totalPages % baseSum !== 0) return null;
+        const repeats = totalPages / baseSum;
+        const expanded = [];
+        for (let r = 0; r < repeats; r++) for (let i = 0; i < patternSizes.length; i++) expanded.push(patternSizes[i]);
+        return expanded;
+    }
+    function buildInsertSetInfoList(startPage, totalPages, patternSizes, nextStudyScheduleIndex) {
+        const sum = patternSizes.reduce((a, b) => a + b, 0);
+        if (sum !== totalPages) return null;
+        const index = nextStudyScheduleIndex != null ? nextStudyScheduleIndex : 1;
+        const list = []; let from = startPage;
+        for (let i = 0; i < patternSizes.length; i++) {
+            const n = patternSizes[i];
+            const to = from + n - 1;
+            list.push({ StudyScheduleIndex: index, WorksheetNOFrom: from, WorksheetNOTo: to, GradingMethod: '1' });
+            from = to + 1;
+        }
+        return list;
+    }
+    function getStudyResultData(res) { if (!res) return null; return res.data || res.Data || res; }
+    function isStudyUnitCompleted(u) { if (!u) return false; if (u.StudyStatus === '6') return true; if (u.StudyDate || u.FinishDate) return true; return false; }
+    function buildPayloadFromStudyResult() {
+        const req = typeof lastStudyResultRequest === 'string' ? (() => { try { return JSON.parse(lastStudyResultRequest); } catch (e) { return null; } })() : lastStudyResultRequest;
+        if (!req || !lastStudyResult) return null;
+        const res = getStudyResultData(lastStudyResult);
+        if (!res) return null;
+        const list = res.StudyUnitInfoList || [];
+        let maxIndexWithStudyDate = 0, maxWorksheetNOCompleted = 0;
+        list.forEach(u => {
+            if (u.StudyDate && u.StudyScheduleIndex != null && u.StudyScheduleIndex > maxIndexWithStudyDate) maxIndexWithStudyDate = u.StudyScheduleIndex;
+            if (isStudyUnitCompleted(u) && u.WorksheetNOTo != null && u.WorksheetNOTo > maxWorksheetNOCompleted) maxWorksheetNOCompleted = u.WorksheetNOTo;
+        });
+        return {
+            SystemCountryCD: req.SystemCountryCD || 'USA', CenterID: req.CenterID || '', StudentID: req.StudentID || '', ClassID: req.ClassID || '',
+            ClassStudentSeq: req.ClassStudentSeq != null ? req.ClassStudentSeq : null, SubjectCD: req.SubjectCD || '', WorksheetCD: req.WorksheetCD || '',
+            DeleteSetInfoList: [], DiagnosticTestSetRegisterKbn: '0', FinishTestSetInfoList: [], InsertSetInfoList: [],
+            NotDownloadLastUpdateTime: res.NotDownloadLastUpdateTime || null,
+            NotUpdateMaxStudyScheduleIndex: (res.NotUpdateMaxStudyScheduleIndex != null ? res.NotUpdateMaxStudyScheduleIndex : maxIndexWithStudyDate),
+            NotUpdateMaxWorksheetNO: (res.NotUpdateMaxWorksheetNO != null ? res.NotUpdateMaxWorksheetNO : maxWorksheetNOCompleted),
+            client: req.client || CLIENT,
+            id: lastApiResponseId != null ? String(lastApiResponseId + 1) : (req.id != null ? String(parseInt(req.id, 10) + 1) : String(Date.now()))
+        };
+    }
+    function getEffectiveContext() {
+        const fromStudy = buildPayloadFromStudyResult();
+        if (fromStudy) return fromStudy;
+        return lastRegisterStudySetRequest || null;
+    }
+    function getNotUpdateFromStudyResult() {
+        if (!lastStudyResult) return null;
+        const res = getStudyResultData(lastStudyResult);
+        if (!res) return null;
+        const list = res.StudyUnitInfoList || [];
+        let maxIndexWithStudyDate = 0, maxWorksheetNOCompleted = 0;
+        list.forEach(u => {
+            if (u.StudyDate && u.StudyScheduleIndex != null && u.StudyScheduleIndex > maxIndexWithStudyDate) maxIndexWithStudyDate = u.StudyScheduleIndex;
+            if (isStudyUnitCompleted(u) && u.WorksheetNOTo != null && u.WorksheetNOTo > maxWorksheetNOCompleted) maxWorksheetNOCompleted = u.WorksheetNOTo;
+        });
+        return {
+            NotUpdateMaxStudyScheduleIndex: res.NotUpdateMaxStudyScheduleIndex != null ? res.NotUpdateMaxStudyScheduleIndex : maxIndexWithStudyDate,
+            NotUpdateMaxWorksheetNO: res.NotUpdateMaxWorksheetNO != null ? res.NotUpdateMaxWorksheetNO : maxWorksheetNOCompleted
+        };
+    }
+    function getNextStudyScheduleIndex(ctx) {
+        if (!ctx) return 1;
+        const list = ctx.InsertSetInfoList;
+        if (list && list.length) {
+            let max = 0;
+            list.forEach(x => { if (x.StudyScheduleIndex != null && x.StudyScheduleIndex > max) max = x.StudyScheduleIndex; });
+            return max + 1;
+        }
+        if (lastStudyResult) {
+            const res = getStudyResultData(lastStudyResult);
+            if (res && res.StudyUnitInfoList && res.StudyUnitInfoList.length) {
+                let maxAll = 0;
+                res.StudyUnitInfoList.forEach(u => { if (u.StudyScheduleIndex != null && u.StudyScheduleIndex > maxAll) maxAll = u.StudyScheduleIndex; });
+                return maxAll + 1;
+            }
+        }
+        return (ctx.NotUpdateMaxStudyScheduleIndex != null ? ctx.NotUpdateMaxStudyScheduleIndex : 0) + 1;
+    }
+    function getWorksheetSetterContextLabel() {
+        const ctx = getEffectiveContext();
+        if (!ctx) return '(Open a student\u2019s Set page first)';
+        const sid = ctx.StudentID || '';
+        const subj = ctx.SubjectCD === '010' ? 'Math' : ctx.SubjectCD === '022' ? 'Reading' : (ctx.SubjectCD || '');
+        const ws = ctx.WorksheetCD || '';
+        let name = '';
+        if (sid && capturedStudents.length) {
+            const s = capturedStudents.find(st => (st.StudentID || st.LoginID) === sid);
+            if (s) name = ' \u2013 ' + (s.FullName || s.StudentName || s.Name || '');
+        }
+        return sid + name + ' | ' + subj + ' ' + ws;
+    }
+    function updateWorksheetSetterUI() {
+        const ctxEl = document.getElementById('kumon-bs-ctx');
+        if (ctxEl) ctxEl.textContent = getWorksheetSetterContextLabel();
+        const statusEl = document.getElementById('kumon-bs-status');
+        if (statusEl) {
+            const parts = [];
+            parts.push(lastToken ? 'Token \u2713' : 'Token \u2717');
+            parts.push(getEffectiveContext() ? 'Context \u2713' : 'Context \u2717');
+            statusEl.textContent = parts.join(' ');
+        }
+    }
+
+    document.addEventListener('KumonBreakSetToken', function(ev) { const auth = ev.detail && ev.detail.authorization; if (auth) { lastToken = auth; updateWorksheetSetterUI(); } });
+    document.addEventListener('KumonBreakSetRegister', function(ev) {
+        const d = ev.detail;
+        if (!d) return;
+        try {
+            if (d.requestBody) lastRegisterStudySetRequest = typeof d.requestBody === 'string' ? JSON.parse(d.requestBody) : d.requestBody;
+            if (d.authorization) lastToken = d.authorization;
+            updateWorksheetSetterUI();
+        } catch (e) {}
+    });
+    document.addEventListener('KumonBreakSetStudyResult', function(ev) {
+        const d = ev.detail;
+        if (d && d.requestBody) lastStudyResultRequest = d.requestBody;
+        if (d && d.responseData) lastStudyResult = d.responseData;
+        if (d && d.responseData && typeof d.responseData === 'object') {
+            const res = d.responseData.ID != null ? d.responseData : (d.responseData.data || d.responseData.Data || d.responseData);
+            if (res && res.ID != null) { const n = parseInt(res.ID, 10); if (!isNaN(n)) lastApiResponseId = n; }
+        }
+        updateWorksheetSetterUI();
+    });
+    document.addEventListener('KumonBreakSetStudents', function(ev) {
+        try {
+            const list = JSON.parse((ev.detail && ev.detail.studentsJson) || '[]');
+            if (Array.isArray(list) && list.length) { capturedStudents = list; updateWorksheetSetterUI(); }
+        } catch (e) {}
+    });
+
     // Create UI
     function createUI() {
-        // Remove existing UI if present
-        const existing = document.getElementById('kumon-auto-grader-ui');
-        if (existing) {
-            existing.remove();
-        }
+        // Remove existing UI if present (unified or legacy panel)
+        const existing = document.getElementById('kumon-extensions-ui') || document.getElementById('kumon-auto-grader-ui');
+        if (existing) existing.remove();
 
-        // Create container
+        // Create container (unified panel with functionality dropdown)
         uiContainer = document.createElement('div');
-        uiContainer.id = 'kumon-auto-grader-ui';
+        uiContainer.id = 'kumon-extensions-ui';
         uiContainer.innerHTML = `
             <div class="kumon-grader-header">
-                <h3>🎯 Kumon Auto Grader</h3>
+                <h3>📌 Kumon Extensions</h3>
                 <div class="header-buttons">
+                    <select id="kumon-func-select" class="kumon-func-select" title="Switch functionality">
+                        <option value="grader">Auto Grader</option>
+                        <option value="worksheet-setter">Worksheet Setter</option>
+                    </select>
                     <button class="toggle-settings" id="toggle-settings" title="Settings">⚙️</button>
                     <button class="resize-handle" id="resize-handle" title="Resize">⛶</button>
                 </div>
             </div>
+            <div id="kumon-panel-grader" class="kumon-panel">
             <div class="kumon-grader-body">
                 <div class="status-section">
                     <div class="status-text status-info" id="status-text">Ready</div>
@@ -1103,18 +1334,52 @@
                     </div>
                 </div>
             </div>
+            </div>
+            <div id="kumon-panel-worksheet-setter" class="kumon-panel" style="display:none;">
+                <div class="kumon-bs-body">
+                    <div class="kumon-bs-block">
+                        <div class="kumon-bs-label">Current target</div>
+                        <div id="kumon-bs-ctx" class="kumon-bs-ctx">(Open a student\u2019s Set page first)</div>
+                        <div id="kumon-bs-status" class="kumon-bs-hint">Token \u2717 | Context \u2717</div>
+                    </div>
+                    <div class="kumon-bs-block">
+                        <div class="kumon-bs-label">Start page</div>
+                        <input id="kumon-bs-start" type="number" min="1" placeholder="e.g. 111" class="kumon-bs-input" />
+                        <div class="kumon-bs-label" style="margin-top:8px;">Total pages</div>
+                        <input id="kumon-bs-total" type="number" min="1" placeholder="e.g. 10" class="kumon-bs-input" />
+                        <div class="kumon-bs-label" style="margin-top:8px;">Pattern (preset or custom)</div>
+                        <div class="kumon-bs-presets">
+                            <button type="button" class="kumon-bs-preset" data-pattern="5-5">5-5</button>
+                            <button type="button" class="kumon-bs-preset" data-pattern="4-3-3">4-3-3</button>
+                            <button type="button" class="kumon-bs-preset" data-pattern="3-2-3-2">3-2-3-2</button>
+                            <button type="button" class="kumon-bs-preset" data-pattern="2-2-2-2-2">2-2-2-2-2</button>
+                            <button type="button" class="kumon-bs-preset" data-pattern="4-4-2">4-4-2</button>
+                            <button type="button" class="kumon-bs-preset" data-pattern="3-3-3-1">3-3-3-1</button>
+                        </div>
+                        <input id="kumon-bs-pattern" type="text" placeholder="e.g. 5-5 or 5,3,2" class="kumon-bs-input" />
+                        <div id="kumon-bs-preview" class="kumon-bs-preview"></div>
+                        <button id="kumon-bs-assign-btn" class="kumon-bs-btn">Assign</button>
+                        <div id="kumon-bs-result" class="kumon-bs-result"></div>
+                        <details class="kumon-bs-details"><summary>Paste context (if capture fails)</summary>
+                        <div class="kumon-bs-hint" style="margin:6px 0;">Copy RegisterStudySetInfo request from DevTools \u2192 Network, then paste below.</div>
+                        <textarea id="kumon-bs-paste-ctx" class="kumon-bs-textarea" placeholder="Paste full request JSON here"></textarea>
+                        <button id="kumon-bs-use-pasted-btn" class="kumon-bs-btn-secondary">Use pasted context</button>
+                        </details>
+                    </div>
+                </div>
+            </div>
         `;
 
         // Add styles
         const style = document.createElement('style');
         style.textContent = `
-            #kumon-auto-grader-ui {
+            #kumon-extensions-ui {
                 position: fixed;
                 top: 20px;
                 right: 20px;
-                width: 240px;
-                min-width: 200px;
-                max-width: 400px;
+                width: 280px;
+                min-width: 240px;
+                max-width: 420px;
                 min-height: 200px;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 border-radius: 8px;
@@ -1129,7 +1394,7 @@
                 font-size: 12px;
             }
 
-            #kumon-auto-grader-ui:hover {
+            #kumon-extensions-ui:hover {
                 transform: translateY(-2px);
                 box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
             }
@@ -1148,13 +1413,27 @@
                 margin: 0;
                 font-size: 13px;
                 font-weight: 600;
-                flex: 1;
+                flex: 0 0 auto;
             }
 
             .header-buttons {
                 display: flex;
                 gap: 6px;
+                align-items: center;
             }
+
+            .kumon-func-select {
+                padding: 4px 6px;
+                font-size: 11px;
+                border-radius: 4px;
+                border: 1px solid rgba(255,255,255,0.4);
+                background: rgba(255,255,255,0.2);
+                color: white;
+                cursor: pointer;
+                pointer-events: auto;
+            }
+            .kumon-func-select option { background: #333; color: #fff; }
+            .kumon-panel { overflow: auto; }
 
             .toggle-settings, .resize-handle {
                 background: rgba(255, 255, 255, 0.2);
@@ -1443,6 +1722,23 @@
                 background: white;
                 color: #333;
             }
+            .kumon-bs-body { padding: 12px; }
+            .kumon-bs-block { margin-bottom: 12px; }
+            .kumon-bs-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #a6e3a1; margin-bottom: 4px; }
+            .kumon-bs-ctx { font-size: 12px; color: #cdd6f4; line-height: 1.4; margin-bottom: 4px; }
+            .kumon-bs-hint { font-size: 10px; color: rgba(255,255,255,0.6); }
+            .kumon-bs-input { width: 100%; padding: 8px 10px; font-size: 13px; background: rgba(0,0,0,0.35); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; margin-bottom: 4px; box-sizing: border-box; }
+            .kumon-bs-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+            .kumon-bs-preset { padding: 6px 10px; font-size: 11px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.3); color: #a6e3a1; cursor: pointer; }
+            .kumon-bs-preset:hover { background: rgba(255,255,255,0.15); }
+            .kumon-bs-preview { font-size: 11px; font-family: monospace; background: rgba(0,0,0,0.35); padding: 8px; border-radius: 6px; margin: 8px 0; color: #a6e3a1; white-space: pre-wrap; word-break: break-all; min-height: 1.2em; }
+            .kumon-bs-btn { width: 100%; padding: 10px 14px; background: linear-gradient(135deg, #4CAF50, #45a049); color: #fff; border: none; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
+            .kumon-bs-btn:hover { filter: brightness(1.1); }
+            .kumon-bs-result { font-size: 12px; margin-top: 8px; min-height: 1.4em; }
+            .kumon-bs-details { margin-top: 10px; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; overflow: hidden; }
+            .kumon-bs-details summary { padding: 6px 10px; font-size: 11px; font-weight: 600; cursor: pointer; background: rgba(0,0,0,0.2); }
+            .kumon-bs-textarea { width: 100%; min-height: 80px; margin: 6px 0; padding: 8px; font-size: 10px; font-family: monospace; background: rgba(0,0,0,0.35); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; resize: vertical; box-sizing: border-box; }
+            .kumon-bs-btn-secondary { width: 100%; padding: 8px; font-size: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.3); color: #a6e3a1; cursor: pointer; }
         `;
 
         document.head.appendChild(style);
@@ -1474,7 +1770,9 @@
         header.addEventListener('mousedown', (e) => {
             if (e.target.classList.contains('toggle-settings') ||
                 e.target.classList.contains('resize-handle') ||
-                e.target.closest('.header-buttons')) {
+                e.target.id === 'kumon-func-select' ||
+                (e.target.closest && e.target.closest('#kumon-func-select')) ||
+                (e.target.closest && e.target.closest('.header-buttons'))) {
                 return;
             }
             isDragging = true;
@@ -1577,6 +1875,156 @@
             CONFIG.enableLogging = e.target.checked;
         });
 
+        // Functionality dropdown: switch panel content
+        const funcSelect = document.getElementById('kumon-func-select');
+        const panelGrader = document.getElementById('kumon-panel-grader');
+        const panelWorksheetSetter = document.getElementById('kumon-panel-worksheet-setter');
+        funcSelect.addEventListener('change', () => {
+            const v = funcSelect.value;
+            panelGrader.style.display = v === 'grader' ? 'block' : 'none';
+            panelWorksheetSetter.style.display = v === 'worksheet-setter' ? 'block' : 'none';
+            if (v === 'worksheet-setter') updateWorksheetSetterUI();
+        });
+
+        // Worksheet Setter: preview and Assign
+        const wsStart = document.getElementById('kumon-bs-start');
+        const wsTotal = document.getElementById('kumon-bs-total');
+        const wsPattern = document.getElementById('kumon-bs-pattern');
+        const wsPreview = document.getElementById('kumon-bs-preview');
+
+        function refreshWsPreview() {
+            const start = parseInt(wsStart.value, 10);
+            const total = parseInt(wsTotal.value, 10);
+            const raw = (wsPattern.value || '').trim();
+            const pattern = PRESETS_WS[raw] || parsePattern(raw);
+            if (!pattern.length || isNaN(start) || isNaN(total) || start < 1 || total < 1) {
+                wsPreview.textContent = '';
+                return;
+            }
+            const expanded = expandPatternToTotal(pattern, total);
+            if (!expanded) {
+                const baseSum = pattern.reduce((a, b) => a + b, 0);
+                wsPreview.textContent = 'Total (' + total + ') must be divisible by pattern sum (' + baseSum + ')';
+                wsPreview.style.color = '#f7768e';
+                return;
+            }
+            const ctx = getEffectiveContext();
+            const nextIndex = getNextStudyScheduleIndex(ctx);
+            const list = buildInsertSetInfoList(start, total, expanded, nextIndex);
+            if (!list) { wsPreview.textContent = ''; return; }
+            wsPreview.textContent = list.map(s => 'Set ' + s.StudyScheduleIndex + ': p.' + s.WorksheetNOFrom + '\u2013' + s.WorksheetNOTo).join('\n');
+            wsPreview.style.color = '#a6e3a1';
+        }
+
+        if (wsPattern) { wsPattern.addEventListener('input', refreshWsPreview); wsPattern.addEventListener('change', refreshWsPreview); }
+        if (wsStart) { wsStart.addEventListener('input', refreshWsPreview); wsStart.addEventListener('change', refreshWsPreview); }
+        if (wsTotal) { wsTotal.addEventListener('input', refreshWsPreview); wsTotal.addEventListener('change', refreshWsPreview); }
+
+        panelWorksheetSetter.querySelectorAll('.kumon-bs-preset').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const p = btn.getAttribute('data-pattern');
+                if (wsPattern) { wsPattern.value = p; refreshWsPreview(); }
+            });
+        });
+
+        document.getElementById('kumon-bs-use-pasted-btn').addEventListener('click', function() {
+            const raw = (document.getElementById('kumon-bs-paste-ctx').value || '').trim();
+            const resultEl = document.getElementById('kumon-bs-result');
+            if (!raw) {
+                resultEl.textContent = 'Paste the RegisterStudySetInfo request JSON first.';
+                resultEl.style.color = '#f7768e';
+                return;
+            }
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed && (parsed.StudentID || parsed.CenterID)) {
+                    lastRegisterStudySetRequest = parsed;
+                    updateWorksheetSetterUI();
+                    resultEl.textContent = 'Context applied. You can Assign now.';
+                    resultEl.style.color = '#a6e3a1';
+                } else {
+                    resultEl.textContent = 'JSON must include StudentID and CenterID.';
+                    resultEl.style.color = '#f7768e';
+                }
+            } catch (e) {
+                resultEl.textContent = 'Invalid JSON: ' + (e && e.message);
+                resultEl.style.color = '#f7768e';
+            }
+        });
+
+        document.getElementById('kumon-bs-assign-btn').addEventListener('click', function() {
+            const resultEl = document.getElementById('kumon-bs-result');
+            resultEl.textContent = '';
+            resultEl.style.color = '';
+
+            const ctx = getEffectiveContext();
+            if (!ctx) {
+                resultEl.textContent = 'No context. Open the student\u2019s Set page first.';
+                resultEl.style.color = '#f7768e';
+                return;
+            }
+            if (!lastToken) {
+                resultEl.textContent = 'No token. Use the app (navigate, open student) so we capture auth.';
+                resultEl.style.color = '#f7768e';
+                return;
+            }
+
+            const start = parseInt(wsStart.value, 10);
+            const total = parseInt(wsTotal.value, 10);
+            const raw = (wsPattern.value || '').trim();
+            const pattern = PRESETS_WS[raw] || parsePattern(raw);
+
+            if (isNaN(start) || start < 1) { resultEl.textContent = 'Enter a valid start page.'; resultEl.style.color = '#f7768e'; return; }
+            if (isNaN(total) || total < 1) { resultEl.textContent = 'Enter a valid total pages.'; resultEl.style.color = '#f7768e'; return; }
+            if (!pattern.length) { resultEl.textContent = 'Enter a pattern (e.g. 5-5 or 4,3,3).'; resultEl.style.color = '#f7768e'; return; }
+            const expanded = expandPatternToTotal(pattern, total);
+            if (!expanded) {
+                const baseSum = pattern.reduce((a, b) => a + b, 0);
+                resultEl.textContent = 'Total (' + total + ') must be divisible by pattern sum (' + baseSum + ')';
+                resultEl.style.color = '#f7768e';
+                return;
+            }
+
+            const nextIndex = getNextStudyScheduleIndex(ctx);
+            const insertList = buildInsertSetInfoList(start, total, expanded, nextIndex);
+            if (!insertList) { resultEl.textContent = 'Could not build sets.'; resultEl.style.color = '#f7768e'; return; }
+
+            const payload = {};
+            for (const k in ctx) if (ctx.hasOwnProperty(k)) payload[k] = ctx[k];
+            payload.InsertSetInfoList = insertList;
+            payload.FinishTestSetInfoList = [];
+            payload.DeleteSetInfoList = [];
+            const nextId = lastApiResponseId != null ? lastApiResponseId + 1 : (ctx.id != null ? parseInt(ctx.id, 10) + 1 : null);
+            payload.id = nextId != null ? String(nextId) : String(Date.now());
+            const notUpdate = getNotUpdateFromStudyResult();
+            if (notUpdate) {
+                payload.NotUpdateMaxStudyScheduleIndex = notUpdate.NotUpdateMaxStudyScheduleIndex;
+                payload.NotUpdateMaxWorksheetNO = start + total - 1;
+            }
+
+            resultEl.textContent = 'Sending...';
+
+            fetch(REGISTER_STUDY_SET_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': lastToken },
+                body: JSON.stringify(payload)
+            }).then(res => res.json().then(data => {
+                const rid = data && (data.ID != null ? data.ID : data.id);
+                if (rid != null) { const n = parseInt(rid, 10); if (!isNaN(n)) lastApiResponseId = n; }
+                if (res.ok && data.Result && data.Result.ResultCode === 0) {
+                    resultEl.textContent = 'Success. ' + insertList.length + ' set(s) assigned.';
+                    resultEl.style.color = '#a6e3a1';
+                } else {
+                    const err = (data.Result && data.Result.Errors && data.Result.Errors[0]) || ('ResultCode=' + (data.Result && data.Result.ResultCode)) || ('status=' + res.status);
+                    resultEl.textContent = 'Error: ' + err;
+                    resultEl.style.color = '#f7768e';
+                }
+            }).catch(() => { resultEl.textContent = 'Response error: ' + res.status; resultEl.style.color = '#f7768e'; })).catch(err => {
+                resultEl.textContent = 'Request failed: ' + (err && err.message);
+                resultEl.style.color = '#f7768e';
+            });
+        });
+
         // Initial refresh
         refreshButton.click();
     }
@@ -1595,7 +2043,8 @@
 
     // Initialize
     function init() {
-        log('Kumon Auto Grader initialized', 'success');
+        injectBreakSetCapture();
+        log('Kumon Extensions initialized', 'success');
         createUI();
         document.addEventListener('keydown', handleHotkey);
     }
