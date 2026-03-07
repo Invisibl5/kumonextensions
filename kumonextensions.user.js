@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.2
+// @version      0.3.3
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2231,42 +2231,44 @@
     }
 
     function injectWorksheetPerStudyOptions() {
+        if (window.__kumonWorksheetPerStudyHooked) return;
+        window.__kumonWorksheetPerStudyHooked = true;
+
         const LABELS = [
             '4-3-3 worksheets per study',
             '3-2 worksheets per study',
             '2-2 worksheets per study'
         ];
 
-        const addOptionsOnce = () => {
+        const extendAll = () => {
             const optionContainers = document.querySelectorAll('.setting-container .options.setting-options');
-            if (!optionContainers.length) return false;
+            if (!optionContainers.length) return;
 
             optionContainers.forEach(optionsEl => {
-                const existingLabels = Array.from(optionsEl.querySelectorAll('.option.setting-options')).map(el => (el.textContent || '').trim());
-                const template = optionsEl.querySelector('.option.setting-options');
-                const baseClass = template ? template.className.replace(/\s*option-select\b/, '') : 'option setting-options';
+                // Collect existing labels from both .option elements and raw text nodes
+                const elementLabels = Array.from(optionsEl.querySelectorAll('.option.setting-options')).map(el => (el.textContent || '').trim());
+                const textLabels = Array.from(optionsEl.childNodes)
+                    .filter(n => n.nodeType === Node.TEXT_NODE)
+                    .map(n => (n.textContent || '').trim())
+                    .filter(Boolean);
+                const existing = new Set([...elementLabels, ...textLabels]);
+
+                const template = optionsEl.querySelector('.option.setting-options') || optionsEl.firstElementChild;
+                const baseClass = template && template.className ? template.className : 'option setting-options';
 
                 LABELS.forEach(label => {
-                    if (existingLabels.indexOf(label) === -1) {
-                        const opt = document.createElement('div');
-                        opt.className = baseClass;
-                        opt.textContent = label;
-                        optionsEl.appendChild(opt);
-                    }
+                    if (existing.has(label)) return;
+                    const opt = document.createElement('div');
+                    opt.className = baseClass;
+                    opt.textContent = label;
+                    optionsEl.appendChild(opt);
                 });
             });
-
-            return true;
         };
 
-        addOptionsOnce();
-        let attempts = 0;
-        const maxAttempts = 10;
-        const interval = setInterval(() => {
-            attempts++;
-            const done = addOptionsOnce();
-            if (done || attempts >= maxAttempts) clearInterval(interval);
-        }, 1500);
+        // Try immediately (in case menu is already rendered), and on every click
+        extendAll();
+        document.addEventListener('click', extendAll, true);
     }
 
     // Hotkey handler
