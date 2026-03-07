@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.4
+// @version      0.3.5
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2239,6 +2239,7 @@
             '3-2 worksheets per study',
             '2-2 worksheets per study'
         ];
+        const KEYS = ['4-3-3', '3-2', '2-2'];
 
         const extendAll = () => {
             const optionContainers = document.querySelectorAll('.setting-container .options.setting-options');
@@ -2260,21 +2261,42 @@
                     baseClass = template.className.replace(/\boption-select\b/g, '').trim() || 'option setting-options';
                 }
 
-                LABELS.forEach(label => {
+                LABELS.forEach((label, idx) => {
+                    const key = KEYS[idx] || label;
                     if (existing.has(label)) return;
                     const opt = document.createElement('div');
                     opt.className = baseClass;
                     opt.textContent = label;
+                    opt.dataset.kumonPattern = key;
                     opt.addEventListener('click', (e) => {
-                        // Match native behavior: close the settings menu when an option is chosen.
+                        // Match native behavior: close the settings menu when an option is chosen,
+                        // and remember our own selected pattern.
                         e.stopPropagation();
+                        window.__kumonWorksheetPattern = key;
                         const container = opt.closest('.options.setting-options');
                         if (container) {
+                            const siblings = container.querySelectorAll('.option.setting-options');
+                            siblings.forEach(el => el.classList.remove('option-select'));
+                            opt.classList.add('option-select');
                             container.setAttribute('hidden', '');
                         }
                     });
                     optionsEl.appendChild(opt);
                 });
+
+                // Re-apply selection from stored pattern, if any.
+                const storedKey = window.__kumonWorksheetPattern;
+                if (storedKey) {
+                    const allOpts = optionsEl.querySelectorAll('.option.setting-options');
+                    let selected = null;
+                    allOpts.forEach(el => {
+                        if (el.dataset && el.dataset.kumonPattern === storedKey) selected = el;
+                    });
+                    if (selected) {
+                        allOpts.forEach(el => el.classList.remove('option-select'));
+                        selected.classList.add('option-select');
+                    }
+                }
             });
         };
 
