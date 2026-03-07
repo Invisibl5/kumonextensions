@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.8
+// @version      0.3.9
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2283,46 +2283,6 @@
                     });
                     optionsEl.appendChild(opt);
                 });
-
-                // Re-apply selection from stored pattern, if any.
-                const storedKey = window.__kumonWorksheetPattern;
-                if (storedKey) {
-                    const allOpts = optionsEl.querySelectorAll('.option.setting-options');
-                    let selected = null;
-                    allOpts.forEach(el => {
-                        if (el.dataset && el.dataset.kumonPattern === storedKey) selected = el;
-                    });
-                    if (selected) {
-                        const selectedEls = optionsEl.querySelectorAll('.option-select');
-                        selectedEls.forEach(el => el.classList.remove('option-select'));
-                        selected.classList.add('option-select');
-                    }
-                }
-
-                // Observe future DOM changes so if the app re-applies its own selection,
-                // we restore our custom choice without causing an infinite loop.
-                if (!optionsEl.__kumonObserverAttached) {
-                    optionsEl.__kumonObserverAttached = true;
-                    let updating = false;
-                    const obs = new MutationObserver(() => {
-                        if (updating) return;
-                        const storedKey2 = window.__kumonWorksheetPattern;
-                        if (!storedKey2) return;
-                        const allOpts2 = optionsEl.querySelectorAll('.option.setting-options');
-                        let selected2 = null;
-                        allOpts2.forEach(el => {
-                            if (el.dataset && el.dataset.kumonPattern === storedKey2) selected2 = el;
-                        });
-                        if (selected2) {
-                            const selectedEls2 = optionsEl.querySelectorAll('.option-select');
-                            updating = true;
-                            selectedEls2.forEach(el => el.classList.remove('option-select'));
-                            selected2.classList.add('option-select');
-                            updating = false;
-                        }
-                    });
-                    obs.observe(optionsEl, { childList: true, attributes: true, subtree: true, attributeFilter: ['class'] });
-                }
             });
         };
 
