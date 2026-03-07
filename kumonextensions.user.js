@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.9
+// @version      0.3.10
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2269,15 +2269,12 @@
                     opt.textContent = label;
                     opt.dataset.kumonPattern = key;
                     opt.addEventListener('click', (e) => {
-                        // Match native behavior: close the settings menu when an option is chosen,
-                        // and remember our own selected pattern.
+                        // Remember our own selected pattern and just close the menu.
+                        // Let the site handle its own visual selection (option-select).
                         e.stopPropagation();
                         window.__kumonWorksheetPattern = key;
                         const container = opt.closest('.options.setting-options');
                         if (container) {
-                            const selectedEls = container.querySelectorAll('.option-select');
-                            selectedEls.forEach(el => el.classList.remove('option-select'));
-                            opt.classList.add('option-select');
                             container.setAttribute('hidden', '');
                         }
                     });
