@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.2.1
+// @version      0.2.2
 // @description  Kumon Auto Grader (X / Triangle / Clear + Reapply)
 // @author       Invisibl5
-// @match        *://*/*
+// @match        https://class-navi.digital.kumon.com/us/index.html
 // @run-at       document-idle
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/Invisibl5/kumonextensions/main/kumonextensions.user.js

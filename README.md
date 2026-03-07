@@ -17,10 +17,10 @@ Tampermonkey script: **Kumon Auto Grader** (mark failure boxes with X/Triangle, 
 
 ## Run only on Kumon (optional)
 
-In the script header you can change:
+The script is set to run only on:
 
-- `// @match        *://*/*`  
-to  
-- `// @match        https://class-navi.digital.kumon.com/*`  
+- `https://class-navi.digital.kumon.com/us/index.html`
 
-so it runs only on Kumon Connect.
+To run on all Kumon Class-Navi US pages, change the script header to:
+
+- `// @match        https://class-navi.digital.kumon.com/us/*`
