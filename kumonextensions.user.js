@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.3
+// @version      0.3.4
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2254,13 +2254,25 @@
                 const existing = new Set([...elementLabels, ...textLabels]);
 
                 const template = optionsEl.querySelector('.option.setting-options') || optionsEl.firstElementChild;
-                const baseClass = template && template.className ? template.className : 'option setting-options';
+                let baseClass = 'option setting-options';
+                if (template && template.className) {
+                    // Strip any "option-select" class so new options are not always highlighted
+                    baseClass = template.className.replace(/\boption-select\b/g, '').trim() || 'option setting-options';
+                }
 
                 LABELS.forEach(label => {
                     if (existing.has(label)) return;
                     const opt = document.createElement('div');
                     opt.className = baseClass;
                     opt.textContent = label;
+                    opt.addEventListener('click', (e) => {
+                        // Match native behavior: close the settings menu when an option is chosen.
+                        e.stopPropagation();
+                        const container = opt.closest('.options.setting-options');
+                        if (container) {
+                            container.setAttribute('hidden', '');
+                        }
+                    });
                     optionsEl.appendChild(opt);
                 });
             });
