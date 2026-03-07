@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.1
+// @version      0.3.2
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -1402,6 +1402,7 @@
             <div class="kumon-grader-header">
                 <h3>📌 Kumon Extensions</h3>
                 <div class="header-buttons">
+                    <button class="collapse-panel" id="kumon-collapse" title="Collapse">▾</button>
                     <select id="kumon-func-select" class="kumon-func-select" title="Switch functionality">
                         <option value="grader">Auto Grader</option>
                         <option value="worksheet-setter">Worksheet Setter</option>
@@ -1552,6 +1553,20 @@
                 box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
             }
 
+            #kumon-extensions-ui.kumon-collapsed {
+                min-height: 0;
+                height: auto;
+            }
+
+            #kumon-extensions-ui.kumon-collapsed .kumon-panel,
+            #kumon-extensions-ui.kumon-collapsed .kumon-grader-settings {
+                display: none !important;
+            }
+
+            #kumon-extensions-ui.kumon-collapsed .resize-handle {
+                display: none;
+            }
+
             .kumon-grader-header {
                 padding: 8px 12px;
                 background: rgba(255, 255, 255, 0.1);
@@ -1588,7 +1603,7 @@
             .kumon-func-select option { background: #333; color: #fff; }
             .kumon-panel { overflow: auto; }
 
-            .toggle-settings, .resize-handle {
+            .toggle-settings, .resize-handle, .collapse-panel {
                 background: rgba(255, 255, 255, 0.2);
                 border: none;
                 color: white;
@@ -1600,7 +1615,7 @@
                 line-height: 1;
             }
 
-            .toggle-settings:hover, .resize-handle:hover {
+            .toggle-settings:hover, .resize-handle:hover, .collapse-panel:hover {
                 background: rgba(255, 255, 255, 0.3);
                 transform: scale(1.05);
             }
@@ -1906,6 +1921,7 @@
         const refreshButton = document.getElementById('refresh-btn');
         const toggleSettings = document.getElementById('toggle-settings');
         const resizeHandle = document.getElementById('resize-handle');
+        const collapseButton = document.getElementById('kumon-collapse');
         settingsPanel = document.getElementById('settings-panel');
         const restrictVisible = document.getElementById('restrict-visible');
         const clickDelayInput = document.getElementById('click-delay');
@@ -2011,6 +2027,17 @@
             const isVisible = settingsPanel.style.display !== 'none';
             settingsPanel.style.display = isVisible ? 'none' : 'block';
         });
+
+        if (collapseButton) {
+            let isCollapsed = false;
+            collapseButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                isCollapsed = !isCollapsed;
+                uiContainer.classList.toggle('kumon-collapsed', isCollapsed);
+                collapseButton.textContent = isCollapsed ? '▸' : '▾';
+                collapseButton.title = isCollapsed ? 'Expand' : 'Collapse';
+            });
+        }
 
         restrictVisible.addEventListener('change', (e) => {
             CONFIG.restrictToVisible = e.target.checked;
@@ -2203,6 +2230,45 @@
         refreshButton.click();
     }
 
+    function injectWorksheetPerStudyOptions() {
+        const LABELS = [
+            '4-3-3 worksheets per study',
+            '3-2 worksheets per study',
+            '2-2 worksheets per study'
+        ];
+
+        const addOptionsOnce = () => {
+            const optionContainers = document.querySelectorAll('.setting-container .options.setting-options');
+            if (!optionContainers.length) return false;
+
+            optionContainers.forEach(optionsEl => {
+                const existingLabels = Array.from(optionsEl.querySelectorAll('.option.setting-options')).map(el => (el.textContent || '').trim());
+                const template = optionsEl.querySelector('.option.setting-options');
+                const baseClass = template ? template.className.replace(/\s*option-select\b/, '') : 'option setting-options';
+
+                LABELS.forEach(label => {
+                    if (existingLabels.indexOf(label) === -1) {
+                        const opt = document.createElement('div');
+                        opt.className = baseClass;
+                        opt.textContent = label;
+                        optionsEl.appendChild(opt);
+                    }
+                });
+            });
+
+            return true;
+        };
+
+        addOptionsOnce();
+        let attempts = 0;
+        const maxAttempts = 10;
+        const interval = setInterval(() => {
+            attempts++;
+            const done = addOptionsOnce();
+            if (done || attempts >= maxAttempts) clearInterval(interval);
+        }, 1500);
+    }
+
     // Hotkey handler
     function handleHotkey(event) {
         if (event.altKey && event.key === 'r' && !event.ctrlKey && !event.shiftKey) {
@@ -2220,6 +2286,7 @@
         injectBreakSetCapture();
         log('Kumon Extensions initialized', 'success');
         createUI();
+        injectWorksheetPerStudyOptions();
         document.addEventListener('keydown', handleHotkey);
     }
 
