@@ -46,27 +46,51 @@
     let lastStudyResultRequest = null;
     let lastStudyResult = null;
     let lastApiResponseId = null;
+    /** First GetStudyResultInfoList response per Set (key = StudentID|SubjectCD|WorksheetCD). Used for NotUpdateMax* so we send 200 not 197. */
+    let frozenStudyResultBySet = {};
     let capturedStudents = [];
+    let apiCallLog = [];
+    let registerLog = [];
+    const API_LOG_MAX = 50;
+    const REGISTER_LOG_MAX = 20;
     const REGISTER_STUDY_SET_URL = 'https://instructor2.digital.kumon.com/USA/api/ATD0010P/RegisterStudySetInfo';
-    const CLIENT = { applicationName: 'Class-Navi', version: '1.0.0.0', programName: 'Class-Navi' };
-    const PRESETS_WS = { '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1] };
+    const CLIENT = {
+        applicationName: 'Class-Navi',
+        version: '1.0.0.0',
+        programName: 'Class-Navi',
+        os: typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : '-',
+        machineName: '-'
+    };
+    const PRESETS = { '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1] };
 
-    function injectBreakSetCapture() {
-        if (window.__kumonBreakSetInjected) return;
-        const isKumon = (url) => String(url).indexOf('digital.kumon.com') !== -1;
+    function INJECT_SCRIPT() {
+        const isKumon = (url) => {
+            const u = String(url);
+            return u.indexOf('digital.kumon.com') !== -1 || u.indexOf('instructor2.') !== -1 || u.indexOf('class-navi.') !== -1;
+        };
         const apiName = (url) => { const m = String(url).match(/\/([A-Za-z0-9]+)(?:\?|$)/); return m ? m[1] : url; };
         const isStudyResult = (url) => String(url).indexOf('GetStudyResultInfoList') !== -1;
         const isRegisterStudySet = (url) => String(url).indexOf('RegisterStudySetInfo') !== -1;
-        const isList = (url) => { const u = String(url); return u.indexOf('GetCenterAllStudentList') !== -1 || u.indexOf('StudentList') !== -1; };
+        const isList = (url) => {
+            const u = String(url);
+            return u.indexOf('GetCenterAllStudentList') !== -1 || u.indexOf('StudentList') !== -1 || u.indexOf('GetStudentInfo') !== -1;
+        };
         const dispatchToken = (auth) => { if (auth) try { document.dispatchEvent(new CustomEvent('KumonBreakSetToken', { detail: { authorization: auth } })); } catch (e) {} };
         const extractList = (data) => {
-            if (!data) return []; if (Array.isArray(data)) return data;
+            if (!data) return [];
+            if (Array.isArray(data)) return data;
             if (data.StudentInfoList && Array.isArray(data.StudentInfoList)) return data.StudentInfoList;
             if (data.CenterAllStudentList && Array.isArray(data.CenterAllStudentList)) return data.CenterAllStudentList;
-            const first = Object.values(data).find(Array.isArray); return first || [];
+            if (data.StudentList && Array.isArray(data.StudentList)) return data.StudentList;
+            const first = Object.values(data).find(Array.isArray);
+            return first || [];
         };
         const safeParse = (s) => { if (!s || typeof s !== 'string') return null; try { return JSON.parse(s); } catch (e) { return null; } };
-        const dispatchApi = (dir, name, url, req, res, err) => { try { document.dispatchEvent(new CustomEvent('KumonBreakSetApiCall', { detail: { dir, apiName: name, url, request: req, response: res, error: err || null } })); } catch (e) {} };
+        const logApi = (dir, name, url, req, res, err) => {
+            try {
+                document.dispatchEvent(new CustomEvent('KumonBreakSetApiCall', { detail: { dir, apiName: name, url, request: req, response: res, error: err || null } }));
+            } catch (e) {}
+        };
 
         const origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
         XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
@@ -82,11 +106,12 @@
             const reqBody = typeof body === 'string' ? body : null;
             const reqParsed = safeParse(reqBody);
             if (isKumon(url)) {
-                dispatchApi('XHR_REQ', apiName(url), url, reqParsed || reqBody, null, null);
+                logApi('XHR_REQ', apiName(url), url, reqParsed || reqBody, null, null);
                 xhr.addEventListener('readystatechange', function() {
                     if (xhr.readyState !== 4) return;
-                    let resData = null; try { resData = xhr.response != null && typeof xhr.response === 'object' ? xhr.response : (xhr.responseText ? JSON.parse(xhr.responseText) : null); } catch (e) {}
-                    dispatchApi('XHR_RES', apiName(url), url, reqParsed || reqBody, resData, null);
+                    let resData = null; let err = null;
+                    try { resData = xhr.response != null && typeof xhr.response === 'object' ? xhr.response : (xhr.responseText ? JSON.parse(xhr.responseText) : null); } catch (e) { err = e; }
+                    logApi('XHR_RES', apiName(url), url, reqParsed || reqBody, resData, err);
                     if (resData && typeof resData === 'object') {
                         if (isStudyResult(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetStudyResult', { detail: { requestBody: reqBody, responseData: resData } }));
                         if (isRegisterStudySet(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetRegister', { detail: { requestBody: reqBody, authorization: xhr._kumonAuth } }));
@@ -104,28 +129,68 @@
             const reqParsed = safeParse(reqBody);
             let authHeader = (init && init.headers && typeof init.headers.get === 'function' ? init.headers.get('Authorization') : (init.headers && init.headers.Authorization)) || null;
             if (authHeader) dispatchToken(authHeader);
-            if (isKumon(url)) dispatchApi('FETCH_REQ', apiName(url), url, reqParsed || reqBody, null, null);
+            if (isKumon(url)) logApi('FETCH_REQ', apiName(url), url, reqParsed || reqBody, null, null);
             return origFetch.apply(this, arguments).then(function(res) {
                 if (isKumon(url)) {
                     const clone = res.clone();
                     clone.json().then(function(data) {
-                        dispatchApi('FETCH_RES', apiName(url), url, reqParsed || reqBody, data, null);
+                        logApi('FETCH_RES', apiName(url), url, reqParsed || reqBody, data, null);
                         if (data && typeof data === 'object') {
                             if (isStudyResult(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetStudyResult', { detail: { requestBody: reqBody, responseData: data } }));
                             if (isRegisterStudySet(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetRegister', { detail: { requestBody: reqBody, authorization: authHeader } }));
                             if (isList(url)) { const list = extractList(data); if (list.length) document.dispatchEvent(new CustomEvent('KumonBreakSetStudents', { detail: { studentsJson: JSON.stringify(list) } })); }
                         }
-                    }).catch(function() {});
+                    }).catch(function(e) { logApi('FETCH_RES', apiName(url), url, reqParsed || reqBody, null, e); });
                 }
                 return res;
             });
         };
-        window.__kumonBreakSetInjected = true;
-        const script = document.createElement('script');
-        script.textContent = '// Break set capture injected';
-        (document.documentElement || document.head || document.body).appendChild(script);
-        script.remove();
     }
+
+    function injectBreakSetCapture() {
+        if (window.__kumonBreakSetInjected) return;
+        const script = document.createElement('script');
+        script.textContent = '(' + INJECT_SCRIPT.toString() + ')();';
+        const target = document.documentElement || document.head || document.body;
+        if (target) {
+            window.__kumonBreakSetInjected = true;
+            target.appendChild(script);
+            script.remove();
+        } else {
+            document.addEventListener('DOMContentLoaded', function runOnce() {
+                document.removeEventListener('DOMContentLoaded', runOnce);
+                injectBreakSetCapture();
+            });
+        }
+    }
+
+    try { window.__kumonBreakSetApiLog = apiCallLog; } catch (_) {}
+    try { window.__kumonBreakSetRegisterLog = registerLog; } catch (_) {}
+    document.addEventListener('KumonBreakSetApiCall', function(ev) {
+        const d = ev.detail;
+        if (!d) return;
+        const entry = { ts: Date.now(), dir: d.dir, apiName: d.apiName, url: d.url, request: d.request, response: d.response, error: d.error };
+        apiCallLog.push(entry);
+        if (apiCallLog.length > API_LOG_MAX) apiCallLog.shift();
+        const name = d.apiName || d.url || '?';
+        const dir = d.dir || '';
+        const isRegister = name.indexOf('RegisterStudySetInfo') !== -1;
+        if (isRegister && (dir === 'FETCH_RES' || dir === 'XHR_RES') && d.response != null) {
+            let req = null;
+            for (let i = apiCallLog.length - 1; i >= 0; i--) {
+                const e = apiCallLog[i];
+                if ((e.dir === 'FETCH_REQ' || e.dir === 'XHR_REQ') && e.apiName && e.apiName.indexOf('RegisterStudySetInfo') !== -1) { req = e.request; break; }
+            }
+            registerLog.push({ ts: Date.now(), source: 'page', request: req, response: d.response });
+            if (registerLog.length > REGISTER_LOG_MAX) registerLog.shift();
+            try { document.dispatchEvent(new CustomEvent('KumonBreakSetRegisterLogUpdated')); } catch (_) {}
+        }
+        if (d.response && typeof d.response === 'object') {
+            const res = d.response;
+            const rid = res.ID != null ? res.ID : res.id;
+            if (rid != null) { const n = parseInt(rid, 10); if (!isNaN(n)) lastApiResponseId = n; }
+        }
+    });
 
     // Logging utility
     function log(message, type = 'info') {
@@ -1115,6 +1180,7 @@
         for (let r = 0; r < repeats; r++) for (let i = 0; i < patternSizes.length; i++) expanded.push(patternSizes[i]);
         return expanded;
     }
+    /** Build InsertSetInfoList - multiple break items, ALL with the SAME StudyScheduleIndex. */
     function buildInsertSetInfoList(startPage, totalPages, patternSizes, nextStudyScheduleIndex) {
         const sum = patternSizes.reduce((a, b) => a + b, 0);
         if (sum !== totalPages) return null;
@@ -1129,25 +1195,55 @@
         return list;
     }
     function getStudyResultData(res) { if (!res) return null; return res.data || res.Data || res; }
-    function isStudyUnitCompleted(u) { if (!u) return false; if (u.StudyStatus === '6') return true; if (u.StudyDate || u.FinishDate) return true; return false; }
+    function isStudyUnitCompleted(u) {
+        if (!u) return false;
+        if (u.StudyStatus === '6') return true;
+        if (u.StudyDate || u.FinishDate) return true;
+        return false;
+    }
+    function buildFinishTestItem(u) {
+        return {
+            StudyScheduleIndex: u.StudyScheduleIndex != null ? u.StudyScheduleIndex : 1,
+            StudySec: u.StudySec || '1',
+            WorksheetNOFrom: u.WorksheetNOFrom,
+            WorksheetNOTo: u.WorksheetNOTo,
+            StudyDate: u.StudyDate || null,
+            StudyStatus: u.StudyStatus || '6',
+            FinishDate: u.FinishDate || u.StudyDate || null,
+            CompleteTime: u.CompleteTime != null ? u.CompleteTime : null,
+            FirstCompleteTime: u.FirstCompleteTime != null ? u.FirstCompleteTime : u.CompleteTime,
+            StandardTimeFrom: u.StandardTimeFrom != null ? u.StandardTimeFrom : null,
+            StandardTimeTo: u.StandardTimeTo != null ? u.StandardTimeTo : null,
+            GradingMethod: u.GradingMethod || '1',
+            DownloadFlg: u.DownloadFlg != null ? u.DownloadFlg : '1',
+            StudyStartTime: u.StudyStartTime || null,
+            DeleteFlg: u.DeleteFlg != null ? u.DeleteFlg : '0',
+            SoundFlg: u.SoundFlg != null ? u.SoundFlg : '0'
+        };
+    }
+    /** Build RegisterStudySetInfo payload from GetStudyResultInfoList request + response. NotUpdateMaxWorksheetNO fallback = max worksheet already downloaded. */
     function buildPayloadFromStudyResult() {
         const req = typeof lastStudyResultRequest === 'string' ? (() => { try { return JSON.parse(lastStudyResultRequest); } catch (e) { return null; } })() : lastStudyResultRequest;
         if (!req || !lastStudyResult) return null;
         const res = getStudyResultData(lastStudyResult);
         if (!res) return null;
         const list = res.StudyUnitInfoList || [];
-        let maxIndexWithStudyDate = 0, maxWorksheetNOCompleted = 0;
+        let maxIndexWithStudyDate = 0, maxWorksheetNODownloaded = 0, maxWorksheetNOCompleted = 0;
         list.forEach(u => {
             if (u.StudyDate && u.StudyScheduleIndex != null && u.StudyScheduleIndex > maxIndexWithStudyDate) maxIndexWithStudyDate = u.StudyScheduleIndex;
+            if (u.DownloadFlg === '1' && u.WorksheetNOTo != null && u.WorksheetNOTo > maxWorksheetNODownloaded) maxWorksheetNODownloaded = u.WorksheetNOTo;
             if (isStudyUnitCompleted(u) && u.WorksheetNOTo != null && u.WorksheetNOTo > maxWorksheetNOCompleted) maxWorksheetNOCompleted = u.WorksheetNOTo;
         });
+        const resNotUpdate = res.NotUpdateMaxStudyScheduleIndex;
+        const resNotWorksheet = res.NotUpdateMaxWorksheetNO;
+        const notWorksheetFallback = maxWorksheetNODownloaded > 0 ? maxWorksheetNODownloaded : (maxWorksheetNOCompleted || null);
         return {
             SystemCountryCD: req.SystemCountryCD || 'USA', CenterID: req.CenterID || '', StudentID: req.StudentID || '', ClassID: req.ClassID || '',
             ClassStudentSeq: req.ClassStudentSeq != null ? req.ClassStudentSeq : null, SubjectCD: req.SubjectCD || '', WorksheetCD: req.WorksheetCD || '',
             DeleteSetInfoList: [], DiagnosticTestSetRegisterKbn: '0', FinishTestSetInfoList: [], InsertSetInfoList: [],
             NotDownloadLastUpdateTime: res.NotDownloadLastUpdateTime || null,
-            NotUpdateMaxStudyScheduleIndex: (res.NotUpdateMaxStudyScheduleIndex != null ? res.NotUpdateMaxStudyScheduleIndex : maxIndexWithStudyDate),
-            NotUpdateMaxWorksheetNO: (res.NotUpdateMaxWorksheetNO != null ? res.NotUpdateMaxWorksheetNO : maxWorksheetNOCompleted),
+            NotUpdateMaxStudyScheduleIndex: (resNotUpdate != null ? resNotUpdate : maxIndexWithStudyDate),
+            NotUpdateMaxWorksheetNO: (resNotWorksheet != null ? resNotWorksheet : notWorksheetFallback),
             client: req.client || CLIENT,
             id: lastApiResponseId != null ? String(lastApiResponseId + 1) : (req.id != null ? String(parseInt(req.id, 10) + 1) : String(Date.now()))
         };
@@ -1157,38 +1253,44 @@
         if (fromStudy) return fromStudy;
         return lastRegisterStudySetRequest || null;
     }
-    function getNotUpdateFromStudyResult() {
-        if (!lastStudyResult) return null;
-        const res = getStudyResultData(lastStudyResult);
+    /** Get NotUpdateMaxStudyScheduleIndex and NotUpdateMaxWorksheetNO. Uses frozen study result for this Set when available. NotUpdateMaxWorksheetNO = highest worksheet already DOWNLOADED. */
+    function getNotUpdateFromStudyResult(ctx) {
+        let res = null;
+        const key = ctx ? (ctx.StudentID || '') + '|' + (ctx.SubjectCD || '') + '|' + (ctx.WorksheetCD || '') : '';
+        if (key.length > 2 && frozenStudyResultBySet[key]) res = getStudyResultData(frozenStudyResultBySet[key]);
+        if (!res && lastStudyResult) res = getStudyResultData(lastStudyResult);
         if (!res) return null;
         const list = res.StudyUnitInfoList || [];
-        let maxIndexWithStudyDate = 0, maxWorksheetNOCompleted = 0;
+        let maxIndexWithStudyDate = 0, maxWorksheetNODownloaded = 0, maxWorksheetNOCompleted = 0;
         list.forEach(u => {
             if (u.StudyDate && u.StudyScheduleIndex != null && u.StudyScheduleIndex > maxIndexWithStudyDate) maxIndexWithStudyDate = u.StudyScheduleIndex;
+            if (u.DownloadFlg === '1' && u.WorksheetNOTo != null && u.WorksheetNOTo > maxWorksheetNODownloaded) maxWorksheetNODownloaded = u.WorksheetNOTo;
             if (isStudyUnitCompleted(u) && u.WorksheetNOTo != null && u.WorksheetNOTo > maxWorksheetNOCompleted) maxWorksheetNOCompleted = u.WorksheetNOTo;
         });
         return {
             NotUpdateMaxStudyScheduleIndex: res.NotUpdateMaxStudyScheduleIndex != null ? res.NotUpdateMaxStudyScheduleIndex : maxIndexWithStudyDate,
-            NotUpdateMaxWorksheetNO: res.NotUpdateMaxWorksheetNO != null ? res.NotUpdateMaxWorksheetNO : maxWorksheetNOCompleted
+            NotUpdateMaxWorksheetNO: res.NotUpdateMaxWorksheetNO != null ? res.NotUpdateMaxWorksheetNO : (maxWorksheetNODownloaded > 0 ? maxWorksheetNODownloaded : maxWorksheetNOCompleted)
         };
     }
-    function getNextStudyScheduleIndex(ctx) {
+    /** Next row only: we only add, never replace. Use max + 1 from StudyUnitInfoList. */
+    function getNextStudyScheduleIndex(ctx, startPage, totalPages) {
         if (!ctx) return 1;
         const list = ctx.InsertSetInfoList;
         if (list && list.length) {
             let max = 0;
             list.forEach(x => { if (x.StudyScheduleIndex != null && x.StudyScheduleIndex > max) max = x.StudyScheduleIndex; });
-            return max + 1;
+            return max > 0 ? max + 1 : 1;
         }
         if (lastStudyResult) {
             const res = getStudyResultData(lastStudyResult);
             if (res && res.StudyUnitInfoList && res.StudyUnitInfoList.length) {
                 let maxAll = 0;
                 res.StudyUnitInfoList.forEach(u => { if (u.StudyScheduleIndex != null && u.StudyScheduleIndex > maxAll) maxAll = u.StudyScheduleIndex; });
-                return maxAll + 1;
+                return maxAll > 0 ? maxAll + 1 : (res.NotUpdateMaxStudyScheduleIndex != null ? res.NotUpdateMaxStudyScheduleIndex : 0) + 1;
             }
         }
-        return (ctx.NotUpdateMaxStudyScheduleIndex != null ? ctx.NotUpdateMaxStudyScheduleIndex : 0) + 1;
+        const notUpdate = ctx.NotUpdateMaxStudyScheduleIndex != null ? ctx.NotUpdateMaxStudyScheduleIndex : 0;
+        return notUpdate + 1;
     }
     function getWorksheetSetterContextLabel() {
         const ctx = getEffectiveContext();
@@ -1213,6 +1315,15 @@
             parts.push(getEffectiveContext() ? 'Context \u2713' : 'Context \u2717');
             statusEl.textContent = parts.join(' ');
         }
+        const hintEl = document.getElementById('kumon-bs-register-log-hint');
+        if (hintEl) {
+            if (registerLog.length === 0) hintEl.textContent = 'No RegisterStudySetInfo calls logged yet. Assign manually or use our Assign.';
+            else {
+                const last = registerLog[registerLog.length - 1];
+                const res = last.response || {};
+                hintEl.textContent = 'Last: ' + last.source + ' | ID: ' + (res.ID || res.id) + ' | ExclusionFlg: ' + (res.ExclusionFlg != null ? res.ExclusionFlg : '?') + ' | UpdateStudyInfoList: ' + ((res.UpdateStudyInfoList && res.UpdateStudyInfoList.length) || 0);
+            }
+        }
     }
 
     document.addEventListener('KumonBreakSetToken', function(ev) { const auth = ev.detail && ev.detail.authorization; if (auth) { lastToken = auth; updateWorksheetSetterUI(); } });
@@ -1229,11 +1340,46 @@
         const d = ev.detail;
         if (d && d.requestBody) lastStudyResultRequest = d.requestBody;
         if (d && d.responseData) lastStudyResult = d.responseData;
+        if (d && d.responseData) {
+            const req = (typeof d.requestBody === 'string' ? (() => { try { return JSON.parse(d.requestBody); } catch (e) { return null; } })() : d.requestBody) || {};
+            const key = (req.StudentID || '') + '|' + (req.SubjectCD || '') + '|' + (req.WorksheetCD || '');
+            if (key.length > 2 && !frozenStudyResultBySet[key]) {
+                frozenStudyResultBySet[key] = d.responseData;
+            }
+        }
         if (d && d.responseData && typeof d.responseData === 'object') {
             const res = d.responseData.ID != null ? d.responseData : (d.responseData.data || d.responseData.Data || d.responseData);
             if (res && res.ID != null) { const n = parseInt(res.ID, 10); if (!isNaN(n)) lastApiResponseId = n; }
         }
         updateWorksheetSetterUI();
+    });
+    document.addEventListener('KumonStudyResultCapture', function(ev) {
+        const d = ev.detail;
+        if (!d) return;
+        try {
+            if (d.requestBody) lastStudyResultRequest = typeof d.requestBody === 'string' ? d.requestBody : JSON.stringify(d.requestBody);
+            if (d.studyResultJson) lastStudyResult = JSON.parse(d.studyResultJson);
+            updateWorksheetSetterUI();
+        } catch (e) {}
+    });
+    document.addEventListener('KumonRegisterStudySetCapture', function(ev) {
+        const d = ev.detail;
+        if (!d) return;
+        try {
+            if (d.requestBody) lastRegisterStudySetRequest = typeof d.requestBody === 'string' ? JSON.parse(d.requestBody) : d.requestBody;
+            if (d.authorization) lastToken = d.authorization;
+            updateWorksheetSetterUI();
+        } catch (e) {}
+    });
+    document.addEventListener('KumonTokenCapture', function(ev) {
+        const auth = ev.detail && ev.detail.authorization;
+        if (auth) { lastToken = auth; updateWorksheetSetterUI(); }
+    });
+    document.addEventListener('KumonStudyProfileCapture', function(ev) {
+        try {
+            const list = JSON.parse((ev.detail && ev.detail.studentsJson) || '[]');
+            if (Array.isArray(list) && list.length) { capturedStudents = list; updateWorksheetSetterUI(); }
+        } catch (e) {}
     });
     document.addEventListener('KumonBreakSetStudents', function(ev) {
         try {
@@ -1241,6 +1387,7 @@
             if (Array.isArray(list) && list.length) { capturedStudents = list; updateWorksheetSetterUI(); }
         } catch (e) {}
     });
+    document.addEventListener('KumonBreakSetRegisterLogUpdated', updateWorksheetSetterUI);
 
     // Create UI
     function createUI() {
@@ -1364,6 +1511,12 @@
                         <div class="kumon-bs-hint" style="margin:6px 0;">Copy RegisterStudySetInfo request from DevTools \u2192 Network, then paste below.</div>
                         <textarea id="kumon-bs-paste-ctx" class="kumon-bs-textarea" placeholder="Paste full request JSON here"></textarea>
                         <button id="kumon-bs-use-pasted-btn" class="kumon-bs-btn-secondary">Use pasted context</button>
+                        </details>
+                        <details class="kumon-bs-details"><summary>RegisterStudySetInfo debug</summary>
+                        <div class="kumon-bs-hint" style="margin:6px 0;">In console: <code>window.__kumonBreakSetRegisterLog</code> (last 20 calls, <code>source</code> = "page" or "script").</div>
+                        <button type="button" id="kumon-bs-copy-last-page" class="kumon-bs-btn-secondary" style="margin-top:6px;">Copy last PAGE request (manual assign)</button>
+                        <button type="button" id="kumon-bs-copy-last-script" class="kumon-bs-btn-secondary" style="margin-top:4px;">Copy last SCRIPT request (our Assign)</button>
+                        <div id="kumon-bs-register-log-hint" class="kumon-bs-hint" style="margin-top:6px;"></div>
                         </details>
                     </div>
                 </div>
@@ -1896,7 +2049,7 @@
             const start = parseInt(wsStart.value, 10);
             const total = parseInt(wsTotal.value, 10);
             const raw = (wsPattern.value || '').trim();
-            const pattern = PRESETS_WS[raw] || parsePattern(raw);
+            const pattern = PRESETS[raw] || parsePattern(raw);
             if (!pattern.length || isNaN(start) || isNaN(total) || start < 1 || total < 1) {
                 wsPreview.textContent = '';
                 return;
@@ -1909,7 +2062,7 @@
                 return;
             }
             const ctx = getEffectiveContext();
-            const nextIndex = getNextStudyScheduleIndex(ctx);
+            const nextIndex = getNextStudyScheduleIndex(ctx, start, total);
             const list = buildInsertSetInfoList(start, total, expanded, nextIndex);
             if (!list) { wsPreview.textContent = ''; return; }
             wsPreview.textContent = list.map(s => 'Set ' + s.StudyScheduleIndex + ': p.' + s.WorksheetNOFrom + '\u2013' + s.WorksheetNOTo).join('\n');
@@ -1972,7 +2125,7 @@
             const start = parseInt(wsStart.value, 10);
             const total = parseInt(wsTotal.value, 10);
             const raw = (wsPattern.value || '').trim();
-            const pattern = PRESETS_WS[raw] || parsePattern(raw);
+            const pattern = PRESETS[raw] || parsePattern(raw);
 
             if (isNaN(start) || start < 1) { resultEl.textContent = 'Enter a valid start page.'; resultEl.style.color = '#f7768e'; return; }
             if (isNaN(total) || total < 1) { resultEl.textContent = 'Enter a valid total pages.'; resultEl.style.color = '#f7768e'; return; }
@@ -1985,7 +2138,7 @@
                 return;
             }
 
-            const nextIndex = getNextStudyScheduleIndex(ctx);
+            const nextIndex = getNextStudyScheduleIndex(ctx, start, total);
             const insertList = buildInsertSetInfoList(start, total, expanded, nextIndex);
             if (!insertList) { resultEl.textContent = 'Could not build sets.'; resultEl.style.color = '#f7768e'; return; }
 
@@ -1996,10 +2149,16 @@
             payload.DeleteSetInfoList = [];
             const nextId = lastApiResponseId != null ? lastApiResponseId + 1 : (ctx.id != null ? parseInt(ctx.id, 10) + 1 : null);
             payload.id = nextId != null ? String(nextId) : String(Date.now());
-            const notUpdate = getNotUpdateFromStudyResult();
+            if (!payload.client || typeof payload.client !== 'object') payload.client = {};
+            payload.client.applicationName = payload.client.applicationName || CLIENT.applicationName;
+            payload.client.version = payload.client.version || CLIENT.version;
+            payload.client.programName = payload.client.programName || CLIENT.programName;
+            payload.client.os = payload.client.os || CLIENT.os;
+            payload.client.machineName = payload.client.machineName != null ? payload.client.machineName : CLIENT.machineName;
+            const notUpdate = getNotUpdateFromStudyResult(ctx);
             if (notUpdate) {
                 payload.NotUpdateMaxStudyScheduleIndex = notUpdate.NotUpdateMaxStudyScheduleIndex;
-                payload.NotUpdateMaxWorksheetNO = start + total - 1;
+                payload.NotUpdateMaxWorksheetNO = notUpdate.NotUpdateMaxWorksheetNO;
             }
 
             resultEl.textContent = 'Sending...';
@@ -2011,6 +2170,9 @@
             }).then(res => res.json().then(data => {
                 const rid = data && (data.ID != null ? data.ID : data.id);
                 if (rid != null) { const n = parseInt(rid, 10); if (!isNaN(n)) lastApiResponseId = n; }
+                registerLog.push({ ts: Date.now(), source: 'script', request: payload, response: data });
+                if (registerLog.length > REGISTER_LOG_MAX) registerLog.shift();
+                updateWorksheetSetterUI();
                 if (res.ok && data.Result && data.Result.ResultCode === 0) {
                     resultEl.textContent = 'Success. ' + insertList.length + ' set(s) assigned.';
                     resultEl.style.color = '#a6e3a1';
@@ -2024,6 +2186,18 @@
                 resultEl.style.color = '#f7768e';
             });
         });
+
+        function copyLastBySource(source) {
+            for (let i = registerLog.length - 1; i >= 0; i--) {
+                if (registerLog[i].source === source && registerLog[i].request) {
+                    const json = JSON.stringify(registerLog[i].request, null, 2);
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(json);
+                    return;
+                }
+            }
+        }
+        document.getElementById('kumon-bs-copy-last-page').addEventListener('click', function() { copyLastBySource('page'); updateWorksheetSetterUI(); });
+        document.getElementById('kumon-bs-copy-last-script').addEventListener('click', function() { copyLastBySource('script'); updateWorksheetSetterUI(); });
 
         // Initial refresh
         refreshButton.click();
