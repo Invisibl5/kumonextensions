@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.6
+// @version      0.3.7
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2297,6 +2297,27 @@
                         selectedEls.forEach(el => el.classList.remove('option-select'));
                         selected.classList.add('option-select');
                     }
+                }
+
+                // Observe future DOM changes so if the app re-applies its own selection,
+                // we restore our custom choice.
+                if (!optionsEl.__kumonObserverAttached) {
+                    optionsEl.__kumonObserverAttached = true;
+                    const obs = new MutationObserver(() => {
+                        const storedKey2 = window.__kumonWorksheetPattern;
+                        if (!storedKey2) return;
+                        const allOpts2 = optionsEl.querySelectorAll('.option.setting-options');
+                        let selected2 = null;
+                        allOpts2.forEach(el => {
+                            if (el.dataset && el.dataset.kumonPattern === storedKey2) selected2 = el;
+                        });
+                        if (selected2) {
+                            const selectedEls2 = optionsEl.querySelectorAll('.option-select');
+                            selectedEls2.forEach(el => el.classList.remove('option-select'));
+                            selected2.classList.add('option-select');
+                        }
+                    });
+                    obs.observe(optionsEl, { childList: true, attributes: true, subtree: true, attributeFilter: ['class'] });
                 }
             });
         };
