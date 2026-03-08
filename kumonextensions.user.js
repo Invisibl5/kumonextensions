@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.4.2
+// @version      0.4.3
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -1195,13 +1195,14 @@
     }
     function expandPatternToTotal(patternSizes, totalPages) {
         const baseSum = patternSizes.reduce((a, b) => a + b, 0);
-        if (baseSum <= 0 || totalPages % baseSum !== 0) return null;
-        const repeats = totalPages / baseSum;
+        if (baseSum <= 0) return null;
+        const fullRepeats = Math.floor(totalPages / baseSum);
+        if (fullRepeats < 1) return null;
         const expanded = [];
-        for (let r = 0; r < repeats; r++) for (let i = 0; i < patternSizes.length; i++) expanded.push(patternSizes[i]);
+        for (let r = 0; r < fullRepeats; r++) for (let i = 0; i < patternSizes.length; i++) expanded.push(patternSizes[i]);
         return expanded;
     }
-    /** Build InsertSetInfoList - multiple break items, ALL with the SAME StudyScheduleIndex. */
+    /** Build InsertSetInfoList - multiple break items, ALL with the SAME StudyScheduleIndex. No set may cross a decade (e.g. 60-61); such chunks are split at the boundary. */
     function buildInsertSetInfoList(startPage, totalPages, patternSizes, nextStudyScheduleIndex) {
         const sum = patternSizes.reduce((a, b) => a + b, 0);
         if (sum !== totalPages) return null;
@@ -1210,7 +1211,16 @@
         for (let i = 0; i < patternSizes.length; i++) {
             const n = patternSizes[i];
             const to = from + n - 1;
-            list.push({ StudyScheduleIndex: index, WorksheetNOFrom: from, WorksheetNOTo: to, GradingMethod: '1' });
+            const blockFrom = Math.floor((from - 1) / 10);
+            const blockTo = Math.floor((to - 1) / 10);
+            if (blockFrom === blockTo) {
+                list.push({ StudyScheduleIndex: index, WorksheetNOFrom: from, WorksheetNOTo: to, GradingMethod: '1' });
+            } else {
+                const endOfBlock = (blockFrom + 1) * 10;
+                const startOfNext = endOfBlock + 1;
+                list.push({ StudyScheduleIndex: index, WorksheetNOFrom: from, WorksheetNOTo: endOfBlock, GradingMethod: '1' });
+                list.push({ StudyScheduleIndex: index, WorksheetNOFrom: startOfNext, WorksheetNOTo: to, GradingMethod: '1' });
+            }
             from = to + 1;
         }
         return list;
@@ -1428,8 +1438,9 @@
         const patternSizes = PRESETS[patternKey];
         const expanded = expandPatternToTotal(patternSizes, totalPages);
         if (!expanded) return;
-        const pageStudyScheduleIndex = list[0].StudyScheduleIndex != null ? list[0].StudyScheduleIndex : getNextStudyScheduleIndex(req, startPage, totalPages);
-        const insertList = buildInsertSetInfoList(startPage, totalPages, expanded, pageStudyScheduleIndex);
+        const truncatedTotal = expanded.reduce((a, b) => a + b, 0);
+        const pageStudyScheduleIndex = list[0].StudyScheduleIndex != null ? list[0].StudyScheduleIndex : getNextStudyScheduleIndex(req, startPage, truncatedTotal);
+        const insertList = buildInsertSetInfoList(startPage, truncatedTotal, expanded, pageStudyScheduleIndex);
         if (!insertList) return;
         const payload = {};
         for (const k in req) if (Object.prototype.hasOwnProperty.call(req, k)) payload[k] = req[k];
@@ -1445,7 +1456,8 @@
         const nextId = lastApiResponseId != null ? lastApiResponseId + 1 : (req.id != null ? parseInt(req.id, 10) + 1 : null);
         payload.id = nextId != null ? String(nextId) : String(Date.now());
         window.__kumonReplacementPayload = payload;
-        log('RegisterStudySetInfo replaced with pattern ' + patternKey + ' (' + insertList.length + ' set(s), p.' + startPage + '\u2013' + endPage + ')', 'success');
+        const actualEnd = startPage + truncatedTotal - 1;
+        log('RegisterStudySetInfo replaced with pattern ' + patternKey + ' (' + insertList.length + ' set(s), p.' + startPage + '\u2013' + actualEnd + (actualEnd < endPage ? ', truncated from ' + endPage : '') + ')', 'success');
     });
 
     // Create UI
