@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "Kumon Extensions",
-  "version": "0.5.1",
+  "name": "Class-Navi+",
+  "version": "0.6.0",
   "description": "Kumon Class-Navi: Auto Grader + Worksheet Setter (4-3-3, 3-2, 2-2)",
   "author": "Invisibl5",
+  "icons": {
+    "16": "icons/icon128.png",
+    "48": "icons/icon128.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": ["storage"],
   "host_permissions": [
     "https://class-navi.digital.kumon.com/*",
@@ -18,6 +23,6 @@
     }
   ],
   "web_accessible_resources": [
-    { "resources": ["inject.js"], "matches": ["https://class-navi.digital.kumon.com/**"] }
+    { "resources": ["inject.js"], "matches": ["https://class-navi.digital.kumon.com/*"] }
   ]
 }

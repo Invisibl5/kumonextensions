@@ -44,6 +44,8 @@
     const API_LOG_MAX = 50;
     const REGISTER_LOG_MAX = 20;
     const REGISTER_STUDY_SET_URL = 'https://instructor2.digital.kumon.com/USA/api/ATD0010P/RegisterStudySetInfo';
+    /** Study plan presets: { id, name, startPage, totalPages, patternKey } */
+    let studyPlanPresets = [];
     const CLIENT = {
         applicationName: 'Class-Navi',
         version: '1.0.0.0',
@@ -1308,6 +1310,123 @@
     });
     document.addEventListener('KumonBreakSetRegisterLogUpdated', updateWorksheetSetterUI);
 
+    const STUDY_PLAN_PRESETS_KEY = 'studyPlanPresets';
+    function loadStudyPlanPresets(cb) {
+        chrome.storage.local.get(STUDY_PLAN_PRESETS_KEY, function(o) {
+            studyPlanPresets = Array.isArray(o[STUDY_PLAN_PRESETS_KEY]) ? o[STUDY_PLAN_PRESETS_KEY] : [];
+            if (typeof cb === 'function') cb();
+        });
+    }
+    function saveStudyPlanPresets() {
+        chrome.storage.local.set({ [STUDY_PLAN_PRESETS_KEY]: studyPlanPresets }, function() {});
+    }
+    function renderStudyPlanPresets() {
+        const listEl = document.getElementById('kumon-presets-list');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+        studyPlanPresets.forEach(function(p, i) {
+            const endPage = (p.startPage || 1) + (p.totalPages || 1) - 1;
+            const row = document.createElement('div');
+            row.className = 'kumon-preset-row';
+            row.innerHTML = '<span title="' + (p.name || '') + '">' + (p.name || 'Preset') + '</span> <span>p.' + (p.startPage || 1) + '\u2013' + endPage + ' ' + (p.patternKey || '') + '</span>';
+            const applyBtn = document.createElement('button');
+            applyBtn.type = 'button';
+            applyBtn.textContent = 'Apply';
+            applyBtn.dataset.index = String(i);
+            applyBtn.addEventListener('click', function() { applyStudyPlanPreset(studyPlanPresets[parseInt(this.dataset.index, 10)]); });
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'kumon-preset-del';
+            delBtn.textContent = 'Del';
+            delBtn.dataset.index = String(i);
+            delBtn.addEventListener('click', function() {
+                const idx = parseInt(this.dataset.index, 10);
+                studyPlanPresets.splice(idx, 1);
+                saveStudyPlanPresets();
+                renderStudyPlanPresets();
+            });
+            row.appendChild(applyBtn);
+            row.appendChild(delBtn);
+            listEl.appendChild(row);
+        });
+    }
+    function applyStudyPlanPreset(preset) {
+        const statusEl = document.getElementById('kumon-presets-apply-status');
+        function setStatus(msg, ok) {
+            if (statusEl) { statusEl.textContent = msg || ''; statusEl.style.color = ok === true ? '#a6e3a1' : (ok === false ? '#f7768e' : ''); }
+        }
+        if (!preset || !preset.startPage || !preset.totalPages || !preset.patternKey || !PRESETS[preset.patternKey]) {
+            setStatus('Invalid preset.', false);
+            return;
+        }
+        const ctx = getEffectiveContext();
+        if (!ctx) {
+            setStatus('Open a student Set page first.', false);
+            return;
+        }
+        if (!lastToken) {
+            setStatus('No token. Navigate in the app first.', false);
+            return;
+        }
+        const startPage = parseInt(preset.startPage, 10);
+        const totalPages = parseInt(preset.totalPages, 10);
+        if (isNaN(startPage) || isNaN(totalPages) || startPage < 1 || totalPages < 1) {
+            setStatus('Invalid start/total.', false);
+            return;
+        }
+        const patternSizes = PRESETS[preset.patternKey];
+        const expanded = expandPatternToTotal(patternSizes, totalPages);
+        if (!expanded) {
+            setStatus('Pattern doesn\'t fit total pages.', false);
+            return;
+        }
+        const truncatedTotal = expanded.reduce(function(a, b) { return a + b; }, 0);
+        const nextIndex = getNextStudyScheduleIndex(ctx, startPage, truncatedTotal);
+        const insertList = buildInsertSetInfoList(startPage, truncatedTotal, expanded, nextIndex);
+        if (!insertList) {
+            setStatus('Could not build sets.', false);
+            return;
+        }
+        const payload = {};
+        for (const k in ctx) if (Object.prototype.hasOwnProperty.call(ctx, k)) payload[k] = ctx[k];
+        payload.InsertSetInfoList = insertList;
+        payload.FinishTestSetInfoList = [];
+        payload.DeleteSetInfoList = [];
+        if (!payload.client || typeof payload.client !== 'object') payload.client = {};
+        payload.client.applicationName = payload.client.applicationName || CLIENT.applicationName;
+        payload.client.version = payload.client.version || CLIENT.version;
+        payload.client.programName = payload.client.programName || CLIENT.programName;
+        payload.client.os = payload.client.os || CLIENT.os;
+        payload.client.machineName = payload.client.machineName != null ? payload.client.machineName : CLIENT.machineName;
+        const notUpdate = getNotUpdateFromStudyResult(ctx);
+        if (notUpdate) {
+            payload.NotUpdateMaxStudyScheduleIndex = notUpdate.NotUpdateMaxStudyScheduleIndex;
+            payload.NotUpdateMaxWorksheetNO = notUpdate.NotUpdateMaxWorksheetNO;
+        }
+        const nextId = lastApiResponseId != null ? lastApiResponseId + 1 : (ctx.id != null ? parseInt(ctx.id, 10) + 1 : null);
+        payload.id = nextId != null ? String(nextId) : String(Date.now());
+        setStatus('Sending...', null);
+        fetch(REGISTER_STUDY_SET_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': lastToken },
+            body: JSON.stringify(payload)
+        }).then(function(res) { return res.json(); }).then(function(data) {
+            const rid = data && (data.ID != null ? data.ID : data.id);
+            if (rid != null) { const n = parseInt(rid, 10); if (!isNaN(n)) lastApiResponseId = n; }
+            registerLog.push({ ts: Date.now(), source: 'script', request: payload, response: data });
+            if (registerLog.length > REGISTER_LOG_MAX) registerLog.shift();
+            if (data && data.Result && data.Result.ResultCode === 0) {
+                setStatus('Applied. ' + insertList.length + ' set(s).', true);
+                log('Study plan preset applied: ' + (preset.name || '') + ' (' + insertList.length + ' set(s))', 'success');
+            } else {
+                const err = (data.Result && data.Result.Errors && data.Result.Errors[0]) || ('ResultCode=' + (data.Result && data.Result.ResultCode));
+                setStatus('Error: ' + err, false);
+            }
+        }).catch(function(err) {
+            setStatus('Request failed.', false);
+        });
+    }
+
     /** When the page sends RegisterStudySetInfo and a custom worksheet pattern is selected, build a replacement payload. Dispatch KumonPayloadReady so the page script can replace the request body. */
     document.addEventListener('KumonBuildReplacementPayload', function(ev) {
         let builtPayload = null;
@@ -1406,6 +1525,22 @@
                         <span class="info-label">Result Marks:</span>
                         <span class="info-value" id="result-count">0</span>
                     </div>
+                </div>
+                <div class="kumon-presets-section">
+                    <div class="kumon-presets-label">Study plan presets</div>
+                    <div id="kumon-presets-list" class="kumon-presets-list"></div>
+                    <div class="kumon-presets-add">
+                        <input type="text" id="kumon-preset-name" placeholder="Name" class="kumon-preset-input" />
+                        <input type="number" id="kumon-preset-start" min="1" placeholder="Start" class="kumon-preset-input kumon-preset-num" />
+                        <input type="number" id="kumon-preset-total" min="1" placeholder="Total" class="kumon-preset-input kumon-preset-num" />
+                        <select id="kumon-preset-pattern" class="kumon-preset-select">
+                            <option value="4-3-3">4-3-3</option>
+                            <option value="3-2">3-2</option>
+                            <option value="2-2">2-2</option>
+                        </select>
+                        <button type="button" id="kumon-preset-add-btn" class="kumon-preset-btn">Add</button>
+                    </div>
+                    <div id="kumon-presets-apply-status" class="kumon-presets-status"></div>
                 </div>
             </div>
             <div class="kumon-grader-settings" id="settings-panel" style="display: none;">
@@ -1745,6 +1880,91 @@
                 font-weight: 600;
             }
 
+            .kumon-presets-section {
+                margin-top: 10px;
+                padding-top: 8px;
+                border-top: 1px solid rgba(255,255,255,0.2);
+            }
+            .kumon-presets-label {
+                font-size: 11px;
+                font-weight: 600;
+                margin-bottom: 6px;
+                opacity: 0.95;
+            }
+            .kumon-presets-list {
+                max-height: 120px;
+                overflow-y: auto;
+                margin-bottom: 8px;
+            }
+            .kumon-preset-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 6px;
+                padding: 4px 6px;
+                background: rgba(255,255,255,0.08);
+                border-radius: 4px;
+                margin-bottom: 4px;
+                font-size: 10px;
+            }
+            .kumon-preset-row span {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .kumon-preset-row button {
+                flex-shrink: 0;
+                padding: 2px 6px;
+                font-size: 10px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                background: rgba(255,255,255,0.25);
+                color: white;
+            }
+            .kumon-preset-row button:hover {
+                background: rgba(255,255,255,0.35);
+            }
+            .kumon-preset-row button.kumon-preset-del {
+                background: rgba(255,100,100,0.4);
+            }
+            .kumon-presets-add {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px;
+                align-items: center;
+            }
+            .kumon-preset-input, .kumon-preset-select {
+                padding: 4px 6px;
+                font-size: 10px;
+                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 4px;
+                background: rgba(255,255,255,0.15);
+                color: white;
+            }
+            .kumon-preset-input { width: 60px; }
+            .kumon-preset-input.kumon-preset-num { width: 44px; }
+            .kumon-preset-select { width: 56px; }
+            #kumon-preset-name { width: 72px; }
+            .kumon-preset-btn {
+                padding: 4px 8px;
+                font-size: 10px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                background: rgba(255,255,255,0.25);
+                color: white;
+            }
+            .kumon-preset-btn:hover {
+                background: rgba(255,255,255,0.35);
+            }
+            .kumon-presets-status {
+                margin-top: 4px;
+                font-size: 10px;
+                min-height: 14px;
+            }
+
             .kumon-grader-settings {
                 border-top: 1px solid rgba(255, 255, 255, 0.2);
                 padding: 10px 12px;
@@ -1960,6 +2180,31 @@
 
         enableLogging.addEventListener('change', (e) => {
             CONFIG.enableLogging = e.target.checked;
+        });
+
+        loadStudyPlanPresets(renderStudyPlanPresets);
+        document.getElementById('kumon-preset-add-btn').addEventListener('click', function() {
+            const nameEl = document.getElementById('kumon-preset-name');
+            const startEl = document.getElementById('kumon-preset-start');
+            const totalEl = document.getElementById('kumon-preset-total');
+            const patternEl = document.getElementById('kumon-preset-pattern');
+            const name = (nameEl && nameEl.value || '').trim() || 'Preset';
+            const start = parseInt(startEl && startEl.value, 10);
+            const total = parseInt(totalEl && totalEl.value, 10);
+            const patternKey = patternEl && patternEl.value || '4-3-3';
+            if (isNaN(start) || isNaN(total) || start < 1 || total < 1 || !PRESETS[patternKey]) return;
+            studyPlanPresets.push({
+                id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+                name: name,
+                startPage: start,
+                totalPages: total,
+                patternKey: patternKey
+            });
+            saveStudyPlanPresets();
+            renderStudyPlanPresets();
+            if (nameEl) nameEl.value = '';
+            if (startEl) startEl.value = '';
+            if (totalEl) totalEl.value = '';
         });
 
         // Initial refresh
