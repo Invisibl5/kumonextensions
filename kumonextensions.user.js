@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.4.3
+// @version      0.5.0
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -39,6 +39,9 @@
     let startButton = null;
     let stopButton = null;
     let settingsPanel = null;
+
+    // Extension on/off (full disable: no grader, no worksheet replacement)
+    let extensionEnabled = true;
 
     // --- Functionality 2: Worksheet Setter (Break Sets) ---
     let lastToken = null;
@@ -1422,6 +1425,7 @@
 
     /** When the page sends RegisterStudySetInfo and a custom worksheet pattern is selected, build a replacement payload (same context, our InsertSetInfoList). Inject reads window.__kumonReplacementPayload and replaces the request body. Preserve the page's NotUpdateMax* and StudyScheduleIndex so the server accepts the request. */
     document.addEventListener('KumonBuildReplacementPayload', function(ev) {
+        if (!extensionEnabled) return;
         const req = ev.detail && ev.detail.request;
         if (!req || typeof req !== 'object') return;
         const patternKey = window.__kumonWorksheetPattern;
@@ -1474,10 +1478,6 @@
                 <h3>📌 Kumon Extensions</h3>
                 <div class="header-buttons">
                     <button class="collapse-panel" id="kumon-collapse" title="Collapse">▾</button>
-                    <select id="kumon-func-select" class="kumon-func-select" title="Switch functionality">
-                        <option value="grader">Auto Grader</option>
-                        <option value="worksheet-setter">Worksheet Setter</option>
-                    </select>
                     <button class="toggle-settings" id="toggle-settings" title="Settings">⚙️</button>
                     <button class="resize-handle" id="resize-handle" title="Resize">⛶</button>
                 </div>
@@ -1554,45 +1554,6 @@
                 </div>
             </div>
             </div>
-            <div id="kumon-panel-worksheet-setter" class="kumon-panel" style="display:none;">
-                <div class="kumon-bs-body">
-                    <div class="kumon-bs-block">
-                        <div class="kumon-bs-label">Current target</div>
-                        <div id="kumon-bs-ctx" class="kumon-bs-ctx">(Open a student\u2019s Set page first)</div>
-                        <div id="kumon-bs-status" class="kumon-bs-hint">Token \u2717 | Context \u2717</div>
-                    </div>
-                    <div class="kumon-bs-block">
-                        <div class="kumon-bs-label">Start page</div>
-                        <input id="kumon-bs-start" type="number" min="1" placeholder="e.g. 111" class="kumon-bs-input" />
-                        <div class="kumon-bs-label" style="margin-top:8px;">Total pages</div>
-                        <input id="kumon-bs-total" type="number" min="1" placeholder="e.g. 10" class="kumon-bs-input" />
-                        <div class="kumon-bs-label" style="margin-top:8px;">Pattern (preset or custom)</div>
-                        <div class="kumon-bs-presets">
-                            <button type="button" class="kumon-bs-preset" data-pattern="5-5">5-5</button>
-                            <button type="button" class="kumon-bs-preset" data-pattern="4-3-3">4-3-3</button>
-                            <button type="button" class="kumon-bs-preset" data-pattern="3-2-3-2">3-2-3-2</button>
-                            <button type="button" class="kumon-bs-preset" data-pattern="2-2-2-2-2">2-2-2-2-2</button>
-                            <button type="button" class="kumon-bs-preset" data-pattern="4-4-2">4-4-2</button>
-                            <button type="button" class="kumon-bs-preset" data-pattern="3-3-3-1">3-3-3-1</button>
-                        </div>
-                        <input id="kumon-bs-pattern" type="text" placeholder="e.g. 5-5 or 5,3,2" class="kumon-bs-input" />
-                        <div id="kumon-bs-preview" class="kumon-bs-preview"></div>
-                        <button id="kumon-bs-assign-btn" class="kumon-bs-btn">Assign</button>
-                        <div id="kumon-bs-result" class="kumon-bs-result"></div>
-                        <details class="kumon-bs-details"><summary>Paste context (if capture fails)</summary>
-                        <div class="kumon-bs-hint" style="margin:6px 0;">Copy RegisterStudySetInfo request from DevTools \u2192 Network, then paste below.</div>
-                        <textarea id="kumon-bs-paste-ctx" class="kumon-bs-textarea" placeholder="Paste full request JSON here"></textarea>
-                        <button id="kumon-bs-use-pasted-btn" class="kumon-bs-btn-secondary">Use pasted context</button>
-                        </details>
-                        <details class="kumon-bs-details"><summary>RegisterStudySetInfo debug</summary>
-                        <div class="kumon-bs-hint" style="margin:6px 0;">In console: <code>window.__kumonBreakSetRegisterLog</code> (last 20 calls, <code>source</code> = "page" or "script").</div>
-                        <button type="button" id="kumon-bs-copy-last-page" class="kumon-bs-btn-secondary" style="margin-top:6px;">Copy last PAGE request (manual assign)</button>
-                        <button type="button" id="kumon-bs-copy-last-script" class="kumon-bs-btn-secondary" style="margin-top:4px;">Copy last SCRIPT request (our Assign)</button>
-                        <div id="kumon-bs-register-log-hint" class="kumon-bs-hint" style="margin-top:6px;"></div>
-                        </details>
-                    </div>
-                </div>
-            </div>
         `;
 
         // Add styles
@@ -1661,17 +1622,6 @@
                 align-items: center;
             }
 
-            .kumon-func-select {
-                padding: 4px 6px;
-                font-size: 11px;
-                border-radius: 4px;
-                border: 1px solid rgba(255,255,255,0.4);
-                background: rgba(255,255,255,0.2);
-                color: white;
-                cursor: pointer;
-                pointer-events: auto;
-            }
-            .kumon-func-select option { background: #333; color: #fff; }
             .kumon-panel { overflow: auto; }
 
             .toggle-settings, .resize-handle, .collapse-panel {
@@ -2010,8 +1960,6 @@
         header.addEventListener('mousedown', (e) => {
             if (e.target.classList.contains('toggle-settings') ||
                 e.target.classList.contains('resize-handle') ||
-                e.target.id === 'kumon-func-select' ||
-                (e.target.closest && e.target.closest('#kumon-func-select')) ||
                 (e.target.closest && e.target.closest('.header-buttons'))) {
                 return;
             }
@@ -2076,7 +2024,7 @@
         });
 
         // Event listeners
-        startButton.addEventListener('click', processAllBoxes);
+        startButton.addEventListener('click', () => { if (!extensionEnabled) return; processAllBoxes(); });
         stopButton.addEventListener('click', stopProcessing);
         refreshButton.addEventListener('click', () => {
             const boxes = findFailureBoxes();
@@ -2126,179 +2074,49 @@
             CONFIG.enableLogging = e.target.checked;
         });
 
-        // Functionality dropdown: switch panel content
-        const funcSelect = document.getElementById('kumon-func-select');
-        const panelGrader = document.getElementById('kumon-panel-grader');
-        const panelWorksheetSetter = document.getElementById('kumon-panel-worksheet-setter');
-        funcSelect.addEventListener('change', () => {
-            const v = funcSelect.value;
-            panelGrader.style.display = v === 'grader' ? 'block' : 'none';
-            panelWorksheetSetter.style.display = v === 'worksheet-setter' ? 'block' : 'none';
-            if (v === 'worksheet-setter') updateWorksheetSetterUI();
-        });
-
-        // Worksheet Setter: preview and Assign
-        const wsStart = document.getElementById('kumon-bs-start');
-        const wsTotal = document.getElementById('kumon-bs-total');
-        const wsPattern = document.getElementById('kumon-bs-pattern');
-        const wsPreview = document.getElementById('kumon-bs-preview');
-
-        function refreshWsPreview() {
-            const start = parseInt(wsStart.value, 10);
-            const total = parseInt(wsTotal.value, 10);
-            const raw = (wsPattern.value || '').trim();
-            const pattern = PRESETS[raw] || parsePattern(raw);
-            if (!pattern.length || isNaN(start) || isNaN(total) || start < 1 || total < 1) {
-                wsPreview.textContent = '';
-                return;
-            }
-            const expanded = expandPatternToTotal(pattern, total);
-            if (!expanded) {
-                const baseSum = pattern.reduce((a, b) => a + b, 0);
-                wsPreview.textContent = 'Total (' + total + ') must be divisible by pattern sum (' + baseSum + ')';
-                wsPreview.style.color = '#f7768e';
-                return;
-            }
-            const ctx = getEffectiveContext();
-            const nextIndex = getNextStudyScheduleIndex(ctx, start, total);
-            const list = buildInsertSetInfoList(start, total, expanded, nextIndex);
-            if (!list) { wsPreview.textContent = ''; return; }
-            wsPreview.textContent = list.map(s => 'Set ' + s.StudyScheduleIndex + ': p.' + s.WorksheetNOFrom + '\u2013' + s.WorksheetNOTo).join('\n');
-            wsPreview.style.color = '#a6e3a1';
-        }
-
-        if (wsPattern) { wsPattern.addEventListener('input', refreshWsPreview); wsPattern.addEventListener('change', refreshWsPreview); }
-        if (wsStart) { wsStart.addEventListener('input', refreshWsPreview); wsStart.addEventListener('change', refreshWsPreview); }
-        if (wsTotal) { wsTotal.addEventListener('input', refreshWsPreview); wsTotal.addEventListener('change', refreshWsPreview); }
-
-        panelWorksheetSetter.querySelectorAll('.kumon-bs-preset').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const p = btn.getAttribute('data-pattern');
-                if (wsPattern) { wsPattern.value = p; refreshWsPreview(); }
-            });
-        });
-
-        document.getElementById('kumon-bs-use-pasted-btn').addEventListener('click', function() {
-            const raw = (document.getElementById('kumon-bs-paste-ctx').value || '').trim();
-            const resultEl = document.getElementById('kumon-bs-result');
-            if (!raw) {
-                resultEl.textContent = 'Paste the RegisterStudySetInfo request JSON first.';
-                resultEl.style.color = '#f7768e';
-                return;
-            }
-            try {
-                const parsed = JSON.parse(raw);
-                if (parsed && (parsed.StudentID || parsed.CenterID)) {
-                    lastRegisterStudySetRequest = parsed;
-                    updateWorksheetSetterUI();
-                    resultEl.textContent = 'Context applied. You can Assign now.';
-                    resultEl.style.color = '#a6e3a1';
-                } else {
-                    resultEl.textContent = 'JSON must include StudentID and CenterID.';
-                    resultEl.style.color = '#f7768e';
-                }
-            } catch (e) {
-                resultEl.textContent = 'Invalid JSON: ' + (e && e.message);
-                resultEl.style.color = '#f7768e';
-            }
-        });
-
-        document.getElementById('kumon-bs-assign-btn').addEventListener('click', function() {
-            const resultEl = document.getElementById('kumon-bs-result');
-            resultEl.textContent = '';
-            resultEl.style.color = '';
-
-            const ctx = getEffectiveContext();
-            if (!ctx) {
-                resultEl.textContent = 'No context. Open the student\u2019s Set page first.';
-                resultEl.style.color = '#f7768e';
-                return;
-            }
-            if (!lastToken) {
-                resultEl.textContent = 'No token. Use the app (navigate, open student) so we capture auth.';
-                resultEl.style.color = '#f7768e';
-                return;
-            }
-
-            const start = parseInt(wsStart.value, 10);
-            const total = parseInt(wsTotal.value, 10);
-            const raw = (wsPattern.value || '').trim();
-            const pattern = PRESETS[raw] || parsePattern(raw);
-
-            if (isNaN(start) || start < 1) { resultEl.textContent = 'Enter a valid start page.'; resultEl.style.color = '#f7768e'; return; }
-            if (isNaN(total) || total < 1) { resultEl.textContent = 'Enter a valid total pages.'; resultEl.style.color = '#f7768e'; return; }
-            if (!pattern.length) { resultEl.textContent = 'Enter a pattern (e.g. 5-5 or 4,3,3).'; resultEl.style.color = '#f7768e'; return; }
-            const expanded = expandPatternToTotal(pattern, total);
-            if (!expanded) {
-                const baseSum = pattern.reduce((a, b) => a + b, 0);
-                resultEl.textContent = 'Total (' + total + ') must be divisible by pattern sum (' + baseSum + ')';
-                resultEl.style.color = '#f7768e';
-                return;
-            }
-
-            const nextIndex = getNextStudyScheduleIndex(ctx, start, total);
-            const insertList = buildInsertSetInfoList(start, total, expanded, nextIndex);
-            if (!insertList) { resultEl.textContent = 'Could not build sets.'; resultEl.style.color = '#f7768e'; return; }
-
-            const payload = {};
-            for (const k in ctx) if (ctx.hasOwnProperty(k)) payload[k] = ctx[k];
-            payload.InsertSetInfoList = insertList;
-            payload.FinishTestSetInfoList = [];
-            payload.DeleteSetInfoList = [];
-            const nextId = lastApiResponseId != null ? lastApiResponseId + 1 : (ctx.id != null ? parseInt(ctx.id, 10) + 1 : null);
-            payload.id = nextId != null ? String(nextId) : String(Date.now());
-            if (!payload.client || typeof payload.client !== 'object') payload.client = {};
-            payload.client.applicationName = payload.client.applicationName || CLIENT.applicationName;
-            payload.client.version = payload.client.version || CLIENT.version;
-            payload.client.programName = payload.client.programName || CLIENT.programName;
-            payload.client.os = payload.client.os || CLIENT.os;
-            payload.client.machineName = payload.client.machineName != null ? payload.client.machineName : CLIENT.machineName;
-            const notUpdate = getNotUpdateFromStudyResult(ctx);
-            if (notUpdate) {
-                payload.NotUpdateMaxStudyScheduleIndex = notUpdate.NotUpdateMaxStudyScheduleIndex;
-                payload.NotUpdateMaxWorksheetNO = notUpdate.NotUpdateMaxWorksheetNO;
-            }
-
-            resultEl.textContent = 'Sending...';
-
-            fetch(REGISTER_STUDY_SET_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': lastToken },
-                body: JSON.stringify(payload)
-            }).then(res => res.json().then(data => {
-                const rid = data && (data.ID != null ? data.ID : data.id);
-                if (rid != null) { const n = parseInt(rid, 10); if (!isNaN(n)) lastApiResponseId = n; }
-                registerLog.push({ ts: Date.now(), source: 'script', request: payload, response: data });
-                if (registerLog.length > REGISTER_LOG_MAX) registerLog.shift();
-                updateWorksheetSetterUI();
-                if (res.ok && data.Result && data.Result.ResultCode === 0) {
-                    resultEl.textContent = 'Success. ' + insertList.length + ' set(s) assigned.';
-                    resultEl.style.color = '#a6e3a1';
-                } else {
-                    const err = (data.Result && data.Result.Errors && data.Result.Errors[0]) || ('ResultCode=' + (data.Result && data.Result.ResultCode)) || ('status=' + res.status);
-                    resultEl.textContent = 'Error: ' + err;
-                    resultEl.style.color = '#f7768e';
-                }
-            }).catch(() => { resultEl.textContent = 'Response error: ' + res.status; resultEl.style.color = '#f7768e'; })).catch(err => {
-                resultEl.textContent = 'Request failed: ' + (err && err.message);
-                resultEl.style.color = '#f7768e';
-            });
-        });
-
-        function copyLastBySource(source) {
-            for (let i = registerLog.length - 1; i >= 0; i--) {
-                if (registerLog[i].source === source && registerLog[i].request) {
-                    const json = JSON.stringify(registerLog[i].request, null, 2);
-                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(json);
-                    return;
-                }
-            }
-        }
-        document.getElementById('kumon-bs-copy-last-page').addEventListener('click', function() { copyLastBySource('page'); updateWorksheetSetterUI(); });
-        document.getElementById('kumon-bs-copy-last-script').addEventListener('click', function() { copyLastBySource('script'); updateWorksheetSetterUI(); });
-
         // Initial refresh
         refreshButton.click();
+    }
+
+    function tearDownWorksheetSetter() {
+        document.querySelectorAll('.setting-container .options.setting-options .option[data-kumon-pattern]').forEach(el => el.remove());
+        const styleEl = document.getElementById('kumon-ws-pattern-style');
+        if (styleEl) styleEl.remove();
+        window.__kumonWorksheetPerStudyHooked = false;
+        document.body.removeAttribute('data-kumon-ws-pattern');
+        window.__kumonWorksheetPattern = undefined;
+    }
+
+    function ensureToggleButton() {
+        let wrap = document.getElementById('kumon-extension-toggle-wrap');
+        if (wrap) return;
+        wrap = document.createElement('div');
+        wrap.id = 'kumon-extension-toggle-wrap';
+        wrap.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:10001;';
+        const btn = document.createElement('button');
+        btn.id = 'kumon-extension-toggle-btn';
+        btn.type = 'button';
+        btn.style.cssText = 'padding:6px 12px;font-size:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+        function updateBtnText() { btn.textContent = extensionEnabled ? 'Disable Extension' : 'Enable Extension'; }
+        updateBtnText();
+        btn.addEventListener('click', () => {
+            extensionEnabled = !extensionEnabled;
+            const panel = document.getElementById('kumon-extensions-ui');
+            if (panel) panel.style.display = extensionEnabled ? '' : 'none';
+            if (extensionEnabled) {
+                injectWorksheetPerStudyOptions();
+            } else {
+                tearDownWorksheetSetter();
+            }
+            updateBtnText();
+        });
+        wrap.appendChild(btn);
+        document.body.appendChild(wrap);
+    }
+
+    function updateToggleButtonText() {
+        const btn = document.getElementById('kumon-extension-toggle-btn');
+        if (btn) btn.textContent = extensionEnabled ? 'Disable Extension' : 'Enable Extension';
     }
 
     function injectWorksheetPerStudyOptions() {
@@ -2383,6 +2201,7 @@
 
     // Hotkey handler
     function handleHotkey(event) {
+        if (!extensionEnabled) return;
         if (event.altKey && event.key === 'r' && !event.ctrlKey && !event.shiftKey) {
             event.preventDefault();
             if (!isProcessing) {
@@ -2398,7 +2217,14 @@
         injectBreakSetCapture();
         log('Kumon Extensions initialized', 'success');
         createUI();
-        injectWorksheetPerStudyOptions();
+        ensureToggleButton();
+        if (extensionEnabled) {
+            injectWorksheetPerStudyOptions();
+        } else {
+            tearDownWorksheetSetter();
+            if (uiContainer) uiContainer.style.display = 'none';
+        }
+        updateToggleButtonText();
         document.addEventListener('keydown', handleHotkey);
     }
 
