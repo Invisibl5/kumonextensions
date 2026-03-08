@@ -2343,16 +2343,11 @@
         const KEYS = ['4-3-3', '3-2', '2-2'];
 
         const extendAll = () => {
+            if (!extensionEnabled) return;
             const optionContainers = document.querySelectorAll('.setting-container .options.setting-options');
             if (!optionContainers.length) return;
 
             optionContainers.forEach(optionsEl => {
-                // If extension is disabled, strip out any previously injected options and bail.
-                if (!extensionEnabled) {
-                    optionsEl.querySelectorAll('[data-kumon-pattern]').forEach(el => el.remove());
-                    return;
-                }
-
                 // Collect existing labels from both .option elements and raw text nodes
                 const elementLabels = Array.from(optionsEl.querySelectorAll('.option.setting-options')).map(el => (el.textContent || '').trim());
                 const textLabels = Array.from(optionsEl.childNodes)
