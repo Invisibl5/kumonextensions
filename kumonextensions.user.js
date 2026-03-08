@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.4.0
+// @version      0.4.1
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -1410,7 +1410,7 @@
     });
     document.addEventListener('KumonBreakSetRegisterLogUpdated', updateWorksheetSetterUI);
 
-    /** When the page sends RegisterStudySetInfo and a custom worksheet pattern is selected, build a replacement payload (same context, our InsertSetInfoList). Inject reads window.__kumonReplacementPayload and replaces the request body. */
+    /** When the page sends RegisterStudySetInfo and a custom worksheet pattern is selected, build a replacement payload (same context, our InsertSetInfoList). Inject reads window.__kumonReplacementPayload and replaces the request body. Preserve the page's NotUpdateMax* and StudyScheduleIndex so the server accepts the request. */
     document.addEventListener('KumonBuildReplacementPayload', function(ev) {
         const req = ev.detail && ev.detail.request;
         if (!req || typeof req !== 'object') return;
@@ -1428,19 +1428,14 @@
         const patternSizes = PRESETS[patternKey];
         const expanded = expandPatternToTotal(patternSizes, totalPages);
         if (!expanded) return;
-        const nextIndex = getNextStudyScheduleIndex(req, startPage, totalPages);
-        const insertList = buildInsertSetInfoList(startPage, totalPages, expanded, nextIndex);
+        const pageStudyScheduleIndex = list[0].StudyScheduleIndex != null ? list[0].StudyScheduleIndex : getNextStudyScheduleIndex(req, startPage, totalPages);
+        const insertList = buildInsertSetInfoList(startPage, totalPages, expanded, pageStudyScheduleIndex);
         if (!insertList) return;
         const payload = {};
         for (const k in req) if (Object.prototype.hasOwnProperty.call(req, k)) payload[k] = req[k];
         payload.InsertSetInfoList = insertList;
         payload.FinishTestSetInfoList = req.FinishTestSetInfoList || [];
         payload.DeleteSetInfoList = req.DeleteSetInfoList || [];
-        const notUpdate = getNotUpdateFromStudyResult(req);
-        if (notUpdate) {
-            payload.NotUpdateMaxStudyScheduleIndex = notUpdate.NotUpdateMaxStudyScheduleIndex;
-            payload.NotUpdateMaxWorksheetNO = notUpdate.NotUpdateMaxWorksheetNO;
-        }
         if (!payload.client || typeof payload.client !== 'object') payload.client = {};
         payload.client.applicationName = payload.client.applicationName || CLIENT.applicationName;
         payload.client.version = payload.client.version || CLIENT.version;
