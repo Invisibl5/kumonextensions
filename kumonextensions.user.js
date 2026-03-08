@@ -42,16 +42,6 @@
 
     // Extension on/off (full disable: no grader, no worksheet replacement)
     let extensionEnabled = true;
-    function isGloballyDisabled() {
-        try {
-            const body = document.body;
-            if (!body) return false;
-            const v = body.dataset && body.dataset.kumonExtensionEnabled;
-            return v === 'false';
-        } catch (_) {
-            return false;
-        }
-    }
 
     // --- Functionality 2: Worksheet Setter (Break Sets) ---
     let lastToken = null;
@@ -2131,7 +2121,6 @@
 
     function injectWorksheetPerStudyOptions() {
         if (window.__kumonWorksheetPerStudyHooked) return;
-        if (isGloballyDisabled()) return;
         window.__kumonWorksheetPerStudyHooked = true;
 
         const style = document.createElement('style');
@@ -2163,7 +2152,7 @@
         const KEYS = ['4-3-3', '3-2', '2-2'];
 
         const extendAll = () => {
-            if (!extensionEnabled || isGloballyDisabled()) return;
+            if (!extensionEnabled) return;
             const optionContainers = document.querySelectorAll('.setting-container .options.setting-options');
             if (!optionContainers.length) return;
 
@@ -2213,7 +2202,7 @@
 
     // Hotkey handler
     function handleHotkey(event) {
-        if (!extensionEnabled || isGloballyDisabled()) return;
+        if (!extensionEnabled) return;
         if (event.altKey && event.key === 'r' && !event.ctrlKey && !event.shiftKey) {
             event.preventDefault();
             if (!isProcessing) {
@@ -2226,14 +2215,11 @@
 
     // Initialize
     function init() {
-        if (isGloballyDisabled()) {
-            extensionEnabled = false;
-        }
         injectBreakSetCapture();
         log('Kumon Extensions initialized', 'success');
         createUI();
         ensureToggleButton();
-        if (extensionEnabled && !isGloballyDisabled()) {
+        if (extensionEnabled) {
             injectWorksheetPerStudyOptions();
         } else {
             tearDownWorksheetSetter();
