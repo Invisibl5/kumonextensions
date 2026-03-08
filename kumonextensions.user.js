@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.4.1
+// @version      0.4.2
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2293,6 +2293,27 @@
         if (window.__kumonWorksheetPerStudyHooked) return;
         window.__kumonWorksheetPerStudyHooked = true;
 
+        const style = document.createElement('style');
+        style.id = 'kumon-ws-pattern-style';
+        style.textContent = [
+            'body[data-kumon-ws-pattern] .ATD0010P-root .menu-bar .menu-right .setting-container .options.setting-options .option.option-select,',
+            'body[data-kumon-ws-pattern] .setting-container .options.setting-options .option.option-select { background: #fff !important; }',
+            'body[data-kumon-ws-pattern="4-3-3"] .ATD0010P-root .menu-bar .menu-right .setting-container .options.setting-options .option[data-kumon-pattern="4-3-3"],',
+            'body[data-kumon-ws-pattern="4-3-3"] .setting-container .options.setting-options .option[data-kumon-pattern="4-3-3"] { background: #e6f4ff !important; }',
+            'body[data-kumon-ws-pattern="3-2"] .ATD0010P-root .menu-bar .menu-right .setting-container .options.setting-options .option[data-kumon-pattern="3-2"],',
+            'body[data-kumon-ws-pattern="3-2"] .setting-container .options.setting-options .option[data-kumon-pattern="3-2"] { background: #e6f4ff !important; }',
+            'body[data-kumon-ws-pattern="2-2"] .ATD0010P-root .menu-bar .menu-right .setting-container .options.setting-options .option[data-kumon-pattern="2-2"],',
+            'body[data-kumon-ws-pattern="2-2"] .setting-container .options.setting-options .option[data-kumon-pattern="2-2"] { background: #e6f4ff !important; }'
+        ].join(' ');
+        (document.head || document.documentElement).appendChild(style);
+
+        document.addEventListener('click', function clearCustomSelectionOnNativeOption(e) {
+            const opt = e.target.closest('.setting-container .options.setting-options .option');
+            if (!opt) return;
+            if (opt.dataset.kumonPattern) return;
+            document.body.removeAttribute('data-kumon-ws-pattern');
+        }, true);
+
         const LABELS = [
             '4-3-3 worksheets per study',
             '3-2 worksheets per study',
@@ -2332,6 +2353,7 @@
                         // Let the site handle its own visual selection (option-select).
                         e.stopPropagation();
                         window.__kumonWorksheetPattern = key;
+                        document.body.setAttribute('data-kumon-ws-pattern', key);
                         const container = opt.closest('.options.setting-options');
                         if (container) {
                             container.setAttribute('hidden', '');
