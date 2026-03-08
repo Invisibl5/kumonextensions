@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.5.0
+// @version      0.5.1
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -2152,6 +2152,7 @@
         const KEYS = ['4-3-3', '3-2', '2-2'];
 
         const extendAll = () => {
+            if (!extensionEnabled) return;
             const optionContainers = document.querySelectorAll('.setting-container .options.setting-options');
             if (!optionContainers.length) return;
 
