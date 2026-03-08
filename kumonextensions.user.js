@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kumonextensions
 // @namespace    https://github.com/Invisibl5/kumonextensions
-// @version      0.3.10
+// @version      0.4.0
 // @description  Kumon Extensions: Auto Grader + Worksheet Setter
 // @author       Invisibl5
 // @match        https://class-navi.digital.kumon.com/us/index.html
@@ -61,7 +61,7 @@
         os: typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : '-',
         machineName: '-'
     };
-    const PRESETS = { '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1] };
+    const PRESETS = { '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1], '3-2': [3, 2], '2-2': [2, 2] };
 
     function INJECT_SCRIPT() {
         const isKumon = (url) => {
@@ -103,8 +103,18 @@
         XMLHttpRequest.prototype.send = function(body) {
             const xhr = this;
             const url = xhr._kumonSpUrl || '';
-            const reqBody = typeof body === 'string' ? body : null;
-            const reqParsed = safeParse(reqBody);
+            let reqBody = typeof body === 'string' ? body : null;
+            let reqParsed = safeParse(reqBody);
+            if (isRegisterStudySet(url) && window.__kumonWorksheetPattern && reqParsed) {
+                window.__kumonReplacementPayload = null;
+                try { document.dispatchEvent(new CustomEvent('KumonBuildReplacementPayload', { detail: { request: reqParsed } })); } catch (e) {}
+                if (window.__kumonReplacementPayload) {
+                    body = JSON.stringify(window.__kumonReplacementPayload);
+                    reqBody = body;
+                    reqParsed = window.__kumonReplacementPayload;
+                    window.__kumonReplacementPayload = null;
+                }
+            }
             if (isKumon(url)) {
                 logApi('XHR_REQ', apiName(url), url, reqParsed || reqBody, null, null);
                 xhr.addEventListener('readystatechange', function() {
@@ -129,18 +139,29 @@
             const reqParsed = safeParse(reqBody);
             let authHeader = (init && init.headers && typeof init.headers.get === 'function' ? init.headers.get('Authorization') : (init.headers && init.headers.Authorization)) || null;
             if (authHeader) dispatchToken(authHeader);
-            if (isKumon(url)) logApi('FETCH_REQ', apiName(url), url, reqParsed || reqBody, null, null);
-            return origFetch.apply(this, arguments).then(function(res) {
+            let initToUse = init;
+            if (isRegisterStudySet(url) && window.__kumonWorksheetPattern && reqParsed) {
+                window.__kumonReplacementPayload = null;
+                try { document.dispatchEvent(new CustomEvent('KumonBuildReplacementPayload', { detail: { request: reqParsed } })); } catch (e) {}
+                if (window.__kumonReplacementPayload) {
+                    initToUse = Object.assign({}, init, { body: JSON.stringify(window.__kumonReplacementPayload) });
+                    window.__kumonReplacementPayload = null;
+                }
+            }
+            const bodySent = (initToUse && initToUse.body && typeof initToUse.body === 'string') ? initToUse.body : reqBody;
+            const parsedSent = safeParse(bodySent);
+            if (isKumon(url)) logApi('FETCH_REQ', apiName(url), url, parsedSent || bodySent, null, null);
+            return origFetch.call(this, input, initToUse).then(function(res) {
                 if (isKumon(url)) {
                     const clone = res.clone();
                     clone.json().then(function(data) {
-                        logApi('FETCH_RES', apiName(url), url, reqParsed || reqBody, data, null);
+                        logApi('FETCH_RES', apiName(url), url, parsedSent || bodySent, data, null);
                         if (data && typeof data === 'object') {
-                            if (isStudyResult(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetStudyResult', { detail: { requestBody: reqBody, responseData: data } }));
-                            if (isRegisterStudySet(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetRegister', { detail: { requestBody: reqBody, authorization: authHeader } }));
+                            if (isStudyResult(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetStudyResult', { detail: { requestBody: bodySent, responseData: data } }));
+                            if (isRegisterStudySet(url)) document.dispatchEvent(new CustomEvent('KumonBreakSetRegister', { detail: { requestBody: bodySent, authorization: authHeader } }));
                             if (isList(url)) { const list = extractList(data); if (list.length) document.dispatchEvent(new CustomEvent('KumonBreakSetStudents', { detail: { studentsJson: JSON.stringify(list) } })); }
                         }
-                    }).catch(function(e) { logApi('FETCH_RES', apiName(url), url, reqParsed || reqBody, null, e); });
+                    }).catch(function(e) { logApi('FETCH_RES', apiName(url), url, parsedSent || bodySent, null, e); });
                 }
                 return res;
             });
@@ -1388,6 +1409,49 @@
         } catch (e) {}
     });
     document.addEventListener('KumonBreakSetRegisterLogUpdated', updateWorksheetSetterUI);
+
+    /** When the page sends RegisterStudySetInfo and a custom worksheet pattern is selected, build a replacement payload (same context, our InsertSetInfoList). Inject reads window.__kumonReplacementPayload and replaces the request body. */
+    document.addEventListener('KumonBuildReplacementPayload', function(ev) {
+        const req = ev.detail && ev.detail.request;
+        if (!req || typeof req !== 'object') return;
+        const patternKey = window.__kumonWorksheetPattern;
+        if (!patternKey || !PRESETS[patternKey]) return;
+        const list = req.InsertSetInfoList;
+        if (!list || !list.length) return;
+        let startPage = Infinity, endPage = -Infinity;
+        list.forEach(function(item) {
+            if (item.WorksheetNOFrom != null && item.WorksheetNOFrom < startPage) startPage = item.WorksheetNOFrom;
+            if (item.WorksheetNOTo != null && item.WorksheetNOTo > endPage) endPage = item.WorksheetNOTo;
+        });
+        if (startPage === Infinity || endPage === -Infinity || endPage < startPage) return;
+        const totalPages = endPage - startPage + 1;
+        const patternSizes = PRESETS[patternKey];
+        const expanded = expandPatternToTotal(patternSizes, totalPages);
+        if (!expanded) return;
+        const nextIndex = getNextStudyScheduleIndex(req, startPage, totalPages);
+        const insertList = buildInsertSetInfoList(startPage, totalPages, expanded, nextIndex);
+        if (!insertList) return;
+        const payload = {};
+        for (const k in req) if (Object.prototype.hasOwnProperty.call(req, k)) payload[k] = req[k];
+        payload.InsertSetInfoList = insertList;
+        payload.FinishTestSetInfoList = req.FinishTestSetInfoList || [];
+        payload.DeleteSetInfoList = req.DeleteSetInfoList || [];
+        const notUpdate = getNotUpdateFromStudyResult(req);
+        if (notUpdate) {
+            payload.NotUpdateMaxStudyScheduleIndex = notUpdate.NotUpdateMaxStudyScheduleIndex;
+            payload.NotUpdateMaxWorksheetNO = notUpdate.NotUpdateMaxWorksheetNO;
+        }
+        if (!payload.client || typeof payload.client !== 'object') payload.client = {};
+        payload.client.applicationName = payload.client.applicationName || CLIENT.applicationName;
+        payload.client.version = payload.client.version || CLIENT.version;
+        payload.client.programName = payload.client.programName || CLIENT.programName;
+        payload.client.os = payload.client.os || CLIENT.os;
+        payload.client.machineName = payload.client.machineName != null ? payload.client.machineName : CLIENT.machineName;
+        const nextId = lastApiResponseId != null ? lastApiResponseId + 1 : (req.id != null ? parseInt(req.id, 10) + 1 : null);
+        payload.id = nextId != null ? String(nextId) : String(Date.now());
+        window.__kumonReplacementPayload = payload;
+        log('RegisterStudySetInfo replaced with pattern ' + patternKey + ' (' + insertList.length + ' set(s), p.' + startPage + '\u2013' + endPage + ')', 'success');
+    });
 
     // Create UI
     function createUI() {
