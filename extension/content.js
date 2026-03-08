@@ -53,7 +53,7 @@
         os: typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : '-',
         machineName: '-'
     };
-    const PRESETS = { '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1], '3-2': [3, 2], '2-2': [2, 2] };
+    const PRESETS = { '10': [10], '5': [5], '5-5': [5, 5], '4-3-3': [4, 3, 3], '3-2-3-2': [3, 2, 3, 2], '2-2-2-2-2': [2, 2, 2, 2, 2], '4-4-2': [4, 4, 2], '3-3-3-1': [3, 3, 3, 1], '3-2': [3, 2], '2-2': [2, 2] };
 
     function syncBodyDataset() {
         if (document.body) {
@@ -62,17 +62,7 @@
     }
 
     function injectPageScript() {
-        if (window.__kumonBreakSetInjected) return;
-        try {
-            const url = chrome.runtime.getURL('inject.js');
-            fetch(url).then(function(r) { return r.text(); }).then(function(code) {
-                const script = document.createElement('script');
-                script.textContent = code;
-                (document.documentElement || document.head).appendChild(script);
-                script.remove();
-                window.__kumonBreakSetInjected = true;
-            }).catch(function() {});
-        } catch (e) {}
+        /* inject.js is now loaded via manifest content_scripts with world: MAIN to avoid CSP blocking inline script */
     }
 
     try { window.__kumonBreakSetApiLog = apiCallLog; } catch (_) {}
@@ -1353,7 +1343,7 @@
     function applyStudyPlanPreset(preset) {
         const statusEl = document.getElementById('kumon-presets-apply-status');
         function setStatus(msg, ok) {
-            if (statusEl) { statusEl.textContent = msg || ''; statusEl.style.color = ok === true ? '#a6e3a1' : (ok === false ? '#f7768e' : ''); }
+            if (statusEl) { statusEl.textContent = msg || ''; statusEl.style.color = ok === true ? '#2e7d32' : (ok === false ? '#c62828' : ''); }
         }
         if (!preset || !preset.startPage || !preset.totalPages || !preset.patternKey || !PRESETS[preset.patternKey]) {
             setStatus('Invalid preset.', false);
@@ -1483,6 +1473,10 @@
         uiContainer.innerHTML = `
             <div class="kumon-grader-header">
                 <h3>📌 Kumon Extensions</h3>
+                <select id="kumon-tool-select" class="kumon-tool-select" title="Switch tool">
+                    <option value="grader">Auto Grader</option>
+                    <option value="presets">Study plan presets</option>
+                </select>
                 <div class="header-buttons">
                     <button class="collapse-panel" id="kumon-collapse" title="Collapse">▾</button>
                     <button class="toggle-settings" id="toggle-settings" title="Settings">⚙️</button>
@@ -1526,22 +1520,6 @@
                         <span class="info-value" id="result-count">0</span>
                     </div>
                 </div>
-                <div class="kumon-presets-section">
-                    <div class="kumon-presets-label">Study plan presets</div>
-                    <div id="kumon-presets-list" class="kumon-presets-list"></div>
-                    <div class="kumon-presets-add">
-                        <input type="text" id="kumon-preset-name" placeholder="Name" class="kumon-preset-input" />
-                        <input type="number" id="kumon-preset-start" min="1" placeholder="Start" class="kumon-preset-input kumon-preset-num" />
-                        <input type="number" id="kumon-preset-total" min="1" placeholder="Total" class="kumon-preset-input kumon-preset-num" />
-                        <select id="kumon-preset-pattern" class="kumon-preset-select">
-                            <option value="4-3-3">4-3-3</option>
-                            <option value="3-2">3-2</option>
-                            <option value="2-2">2-2</option>
-                        </select>
-                        <button type="button" id="kumon-preset-add-btn" class="kumon-preset-btn">Add</button>
-                    </div>
-                    <div id="kumon-presets-apply-status" class="kumon-presets-status"></div>
-                </div>
             </div>
             <div class="kumon-grader-settings" id="settings-panel" style="display: none;">
                 <div class="settings-header">Settings</div>
@@ -1577,6 +1555,26 @@
                 </div>
             </div>
             </div>
+            <div id="kumon-panel-presets" class="kumon-panel" style="display: none;">
+                <div class="kumon-presets-body">
+                    <div class="kumon-presets-label">Study plan presets</div>
+                    <div id="kumon-presets-list" class="kumon-presets-list"></div>
+                    <div class="kumon-presets-add">
+                        <input type="text" id="kumon-preset-name" placeholder="Name" class="kumon-preset-input" />
+                        <input type="number" id="kumon-preset-start" min="1" placeholder="Start" class="kumon-preset-input kumon-preset-num" />
+                        <input type="number" id="kumon-preset-total" min="1" placeholder="Total" class="kumon-preset-input kumon-preset-num" />
+                        <select id="kumon-preset-pattern" class="kumon-preset-select">
+                            <option value="10">10</option>
+                            <option value="5">5</option>
+                            <option value="4-3-3">4-3-3</option>
+                            <option value="3-2">3-2</option>
+                            <option value="2-2">2-2</option>
+                        </select>
+                        <button type="button" id="kumon-preset-add-btn" class="kumon-preset-btn">Add</button>
+                    </div>
+                    <div id="kumon-presets-apply-status" class="kumon-presets-status"></div>
+                </div>
+            </div>
         `;
 
         // Add styles
@@ -1590,22 +1588,23 @@
                 min-width: 240px;
                 max-width: 420px;
                 min-height: 200px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: linear-gradient(180deg, #02497e 0%, #013257 100%);
                 border-radius: 8px;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                box-shadow: 0 8px 32px rgba(1, 50, 87, 0.4);
                 z-index: 10000;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                color: white;
+                color: #333;
                 overflow: hidden;
                 transition: transform 0.3s ease;
                 resize: both;
                 user-select: none;
                 font-size: 12px;
+                border: 1px solid #d0dde2;
             }
 
             #kumon-extensions-ui:hover {
                 transform: translateY(-2px);
-                box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+                box-shadow: 0 12px 40px rgba(1, 50, 87, 0.5);
             }
 
             #kumon-extensions-ui.kumon-collapsed {
@@ -1624,12 +1623,13 @@
 
             .kumon-grader-header {
                 padding: 8px 12px;
-                background: rgba(255, 255, 255, 0.1);
+                background: #013257;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+                border-bottom: 1px solid #d0dde2;
                 cursor: move;
+                color: white;
             }
 
             .kumon-grader-header h3 {
@@ -1637,6 +1637,7 @@
                 font-size: 13px;
                 font-weight: 600;
                 flex: 0 0 auto;
+                color: white;
             }
 
             .header-buttons {
@@ -1645,11 +1646,22 @@
                 align-items: center;
             }
 
-            .kumon-panel { overflow: auto; }
+            .kumon-tool-select {
+                padding: 4px 6px;
+                font-size: 11px;
+                border-radius: 4px;
+                border: 1px solid #d0dde2;
+                background: #fff;
+                color: #333;
+                cursor: pointer;
+            }
+            .kumon-tool-select option { background: #fff; color: #333; }
+
+            .kumon-panel { overflow: auto; background: #f8fafb; color: #333; }
 
             .toggle-settings, .resize-handle, .collapse-panel {
-                background: rgba(255, 255, 255, 0.2);
-                border: none;
+                background: #02497e;
+                border: 1px solid #d0dde2;
                 color: white;
                 padding: 4px 6px;
                 border-radius: 4px;
@@ -1660,7 +1672,7 @@
             }
 
             .toggle-settings:hover, .resize-handle:hover, .collapse-panel:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #013257;
                 transform: scale(1.05);
             }
 
@@ -1670,6 +1682,8 @@
 
             .kumon-grader-body {
                 padding: 12px;
+                background: #f8fafb;
+                color: #333;
             }
 
             .status-section {
@@ -1684,31 +1698,38 @@
                 margin-bottom: 6px;
                 padding: 6px 8px;
                 border-radius: 4px;
-                background: rgba(255, 255, 255, 0.1);
+                background: #fff;
+                border: 1px solid #d0dde2;
+                color: #333;
                 text-align: center;
                 display: block;
                 width: 100%;
             }
 
             .status-info {
-                background: rgba(33, 150, 243, 0.3);
+                background: #e6f4ff;
+                border-color: #02497e;
             }
 
             .status-processing {
-                background: rgba(255, 152, 0, 0.3);
+                background: #fff3e0;
+                border-color: #f57c00;
                 animation: pulse 1.5s ease-in-out infinite;
             }
 
             .status-success {
-                background: rgba(76, 175, 80, 0.3);
+                background: #e8f5e9;
+                border-color: #2e7d32;
             }
 
             .status-warning {
-                background: rgba(255, 152, 0, 0.3);
+                background: #fff3e0;
+                border-color: #f57c00;
             }
 
             .status-stopped {
-                background: rgba(158, 158, 158, 0.3);
+                background: #f5f5f5;
+                border-color: #9e9e9e;
             }
 
             @keyframes pulse {
@@ -1719,7 +1740,7 @@
             .progress-container {
                 width: 100%;
                 height: 8px;
-                background: rgba(255, 255, 255, 0.2);
+                background: #e0e8ec;
                 border-radius: 4px;
                 overflow: hidden;
                 margin-bottom: 8px;
@@ -1727,7 +1748,7 @@
 
             .progress-bar {
                 height: 100%;
-                background: linear-gradient(90deg, #4CAF50, #8BC34A);
+                background: linear-gradient(90deg, #02497e, #013257);
                 width: 0%;
                 transition: width 0.3s ease;
                 border-radius: 4px;
@@ -1736,7 +1757,7 @@
             .progress-text {
                 text-align: center;
                 font-size: 10px;
-                opacity: 0.9;
+                color: #333;
                 display: block;
                 width: 100%;
                 margin-bottom: 8px;
@@ -1752,7 +1773,7 @@
             .mode-label {
                 display: block;
                 font-size: 10px;
-                opacity: 0.9;
+                color: #555;
                 margin-bottom: 6px;
                 font-weight: 500;
             }
@@ -1765,26 +1786,27 @@
 
             .mode-btn {
                 padding: 6px 4px;
-                border: 2px solid rgba(255, 255, 255, 0.3);
+                border: 2px solid #d0dde2;
                 border-radius: 4px;
                 font-size: 10px;
                 font-weight: 600;
                 cursor: pointer;
                 transition: all 0.2s;
-                color: white;
-                background: rgba(255, 255, 255, 0.1);
+                color: #333;
+                background: #fff;
             }
 
             .mode-btn:hover {
-                background: rgba(255, 255, 255, 0.2);
-                border-color: rgba(255, 255, 255, 0.5);
+                background: #e6f4ff;
+                border-color: #02497e;
                 transform: translateY(-1px);
             }
 
             .mode-btn.active {
-                background: rgba(255, 255, 255, 0.3);
-                border-color: rgba(255, 255, 255, 0.8);
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+                background: #02497e;
+                border-color: #013257;
+                color: white;
+                box-shadow: 0 2px 8px rgba(1, 50, 87, 0.3);
             }
 
             .controls-section {
@@ -1796,14 +1818,15 @@
 
             .btn {
                 padding: 8px 10px;
-                border: none;
+                border: 1px solid #d0dde2;
                 border-radius: 5px;
                 font-size: 11px;
                 font-weight: 600;
                 cursor: pointer;
                 transition: all 0.2s;
-                color: white;
-                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+                color: #333;
+                background: #fff;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
             }
 
             .btn:disabled {
@@ -1814,13 +1837,15 @@
             }
 
             .btn-primary {
-                background: linear-gradient(135deg, #4CAF50, #45a049);
+                background: #02497e;
+                color: white;
+                border-color: #013257;
             }
 
             .btn-primary:hover:not(:disabled) {
-                background: linear-gradient(135deg, #45a049, #3d8b40);
+                background: #013257;
                 transform: translateY(-2px);
-                box-shadow: 0 4px 12px rgba(76, 175, 80, 0.5);
+                box-shadow: 0 4px 12px rgba(1, 50, 87, 0.35);
             }
 
             .btn-primary:active:not(:disabled) {
@@ -1828,13 +1853,15 @@
             }
 
             .btn-danger {
-                background: linear-gradient(135deg, #f44336, #d32f2f);
+                background: #c62828;
+                color: white;
+                border-color: #b71c1c;
             }
 
             .btn-danger:hover:not(:disabled) {
-                background: linear-gradient(135deg, #d32f2f, #c62828);
+                background: #b71c1c;
                 transform: translateY(-2px);
-                box-shadow: 0 4px 12px rgba(244, 67, 54, 0.5);
+                box-shadow: 0 4px 12px rgba(198, 40, 40, 0.35);
             }
 
             .btn-danger:active:not(:disabled) {
@@ -1842,13 +1869,15 @@
             }
 
             .btn-secondary {
-                background: linear-gradient(135deg, #2196F3, #1976D2);
+                background: #fff;
+                color: #02497e;
+                border-color: #02497e;
             }
 
             .btn-secondary:hover:not(:disabled) {
-                background: linear-gradient(135deg, #1976D2, #1565C0);
+                background: #e6f4ff;
                 transform: translateY(-2px);
-                box-shadow: 0 4px 12px rgba(33, 150, 243, 0.5);
+                box-shadow: 0 4px 12px rgba(2, 73, 126, 0.2);
             }
 
             .btn-secondary:active:not(:disabled) {
@@ -1856,9 +1885,11 @@
             }
 
             .info-section {
-                background: rgba(255, 255, 255, 0.1);
+                background: #fff;
+                border: 1px solid #d0dde2;
                 border-radius: 4px;
                 padding: 8px;
+                color: #333;
             }
 
             .info-item {
@@ -1873,23 +1904,24 @@
             }
 
             .info-label {
-                opacity: 0.8;
+                color: #555;
             }
 
             .info-value {
                 font-weight: 600;
+                color: #333;
             }
 
-            .kumon-presets-section {
-                margin-top: 10px;
-                padding-top: 8px;
-                border-top: 1px solid rgba(255,255,255,0.2);
+            .kumon-presets-body {
+                padding: 12px;
+                background: #f8fafb;
+                color: #333;
             }
             .kumon-presets-label {
                 font-size: 11px;
                 font-weight: 600;
                 margin-bottom: 6px;
-                opacity: 0.95;
+                color: #333;
             }
             .kumon-presets-list {
                 max-height: 120px;
@@ -1902,10 +1934,12 @@
                 justify-content: space-between;
                 gap: 6px;
                 padding: 4px 6px;
-                background: rgba(255,255,255,0.08);
+                background: #fff;
+                border: 1px solid #d0dde2;
                 border-radius: 4px;
                 margin-bottom: 4px;
                 font-size: 10px;
+                color: #333;
             }
             .kumon-preset-row span {
                 flex: 1;
@@ -1917,17 +1951,19 @@
                 flex-shrink: 0;
                 padding: 2px 6px;
                 font-size: 10px;
-                border: none;
+                border: 1px solid #d0dde2;
                 border-radius: 4px;
                 cursor: pointer;
-                background: rgba(255,255,255,0.25);
-                color: white;
+                background: #fff;
+                color: #02497e;
             }
             .kumon-preset-row button:hover {
-                background: rgba(255,255,255,0.35);
+                background: #e6f4ff;
             }
             .kumon-preset-row button.kumon-preset-del {
-                background: rgba(255,100,100,0.4);
+                background: #ffebee;
+                color: #c62828;
+                border-color: #c62828;
             }
             .kumon-presets-add {
                 display: flex;
@@ -1938,10 +1974,10 @@
             .kumon-preset-input, .kumon-preset-select {
                 padding: 4px 6px;
                 font-size: 10px;
-                border: 1px solid rgba(255,255,255,0.3);
+                border: 1px solid #d0dde2;
                 border-radius: 4px;
-                background: rgba(255,255,255,0.15);
-                color: white;
+                background: #fff;
+                color: #333;
             }
             .kumon-preset-input { width: 60px; }
             .kumon-preset-input.kumon-preset-num { width: 44px; }
@@ -1950,31 +1986,34 @@
             .kumon-preset-btn {
                 padding: 4px 8px;
                 font-size: 10px;
-                border: none;
+                border: 1px solid #02497e;
                 border-radius: 4px;
                 cursor: pointer;
-                background: rgba(255,255,255,0.25);
+                background: #02497e;
                 color: white;
             }
             .kumon-preset-btn:hover {
-                background: rgba(255,255,255,0.35);
+                background: #013257;
             }
             .kumon-presets-status {
                 margin-top: 4px;
                 font-size: 10px;
                 min-height: 14px;
+                color: #555;
             }
 
             .kumon-grader-settings {
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
+                border-top: 1px solid #d0dde2;
                 padding: 10px 12px;
-                background: rgba(0, 0, 0, 0.2);
+                background: #f0f4f6;
+                color: #333;
             }
 
             .settings-header {
                 font-weight: 600;
                 margin-bottom: 8px;
                 font-size: 11px;
+                color: #333;
             }
 
             .settings-content {
@@ -1985,6 +2024,7 @@
 
             .setting-item {
                 font-size: 11px;
+                color: #333;
             }
 
             .setting-item label {
@@ -2003,39 +2043,41 @@
             .setting-item input[type="number"] {
                 width: 80px;
                 padding: 4px 8px;
-                border: none;
+                border: 1px solid #d0dde2;
                 border-radius: 4px;
                 margin-left: 8px;
                 font-size: 12px;
+                background: #fff;
+                color: #333;
             }
 
             .setting-item select {
                 width: 100px;
                 padding: 4px 8px;
-                border: none;
+                border: 1px solid #d0dde2;
                 border-radius: 4px;
                 margin-left: 8px;
                 font-size: 12px;
-                background: white;
+                background: #fff;
                 color: #333;
             }
-            .kumon-bs-body { padding: 12px; }
+            .kumon-bs-body { padding: 12px; background: #f8fafb; color: #333; }
             .kumon-bs-block { margin-bottom: 12px; }
-            .kumon-bs-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #a6e3a1; margin-bottom: 4px; }
-            .kumon-bs-ctx { font-size: 12px; color: #cdd6f4; line-height: 1.4; margin-bottom: 4px; }
-            .kumon-bs-hint { font-size: 10px; color: rgba(255,255,255,0.6); }
-            .kumon-bs-input { width: 100%; padding: 8px 10px; font-size: 13px; background: rgba(0,0,0,0.35); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; margin-bottom: 4px; box-sizing: border-box; }
+            .kumon-bs-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #013257; margin-bottom: 4px; }
+            .kumon-bs-ctx { font-size: 12px; color: #333; line-height: 1.4; margin-bottom: 4px; }
+            .kumon-bs-hint { font-size: 10px; color: #555; }
+            .kumon-bs-input { width: 100%; padding: 8px 10px; font-size: 13px; background: #fff; color: #333; border: 1px solid #d0dde2; border-radius: 8px; margin-bottom: 4px; box-sizing: border-box; }
             .kumon-bs-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-            .kumon-bs-preset { padding: 6px 10px; font-size: 11px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.3); color: #a6e3a1; cursor: pointer; }
-            .kumon-bs-preset:hover { background: rgba(255,255,255,0.15); }
-            .kumon-bs-preview { font-size: 11px; font-family: monospace; background: rgba(0,0,0,0.35); padding: 8px; border-radius: 6px; margin: 8px 0; color: #a6e3a1; white-space: pre-wrap; word-break: break-all; min-height: 1.2em; }
-            .kumon-bs-btn { width: 100%; padding: 10px 14px; background: linear-gradient(135deg, #4CAF50, #45a049); color: #fff; border: none; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
-            .kumon-bs-btn:hover { filter: brightness(1.1); }
-            .kumon-bs-result { font-size: 12px; margin-top: 8px; min-height: 1.4em; }
-            .kumon-bs-details { margin-top: 10px; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; overflow: hidden; }
-            .kumon-bs-details summary { padding: 6px 10px; font-size: 11px; font-weight: 600; cursor: pointer; background: rgba(0,0,0,0.2); }
-            .kumon-bs-textarea { width: 100%; min-height: 80px; margin: 6px 0; padding: 8px; font-size: 10px; font-family: monospace; background: rgba(0,0,0,0.35); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; resize: vertical; box-sizing: border-box; }
-            .kumon-bs-btn-secondary { width: 100%; padding: 8px; font-size: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.3); color: #a6e3a1; cursor: pointer; }
+            .kumon-bs-preset { padding: 6px 10px; font-size: 11px; border-radius: 6px; border: 1px solid #02497e; background: #fff; color: #02497e; cursor: pointer; }
+            .kumon-bs-preset:hover { background: #e6f4ff; }
+            .kumon-bs-preview { font-size: 11px; font-family: monospace; background: #fff; padding: 8px; border-radius: 6px; margin: 8px 0; color: #333; border: 1px solid #d0dde2; white-space: pre-wrap; word-break: break-all; min-height: 1.2em; }
+            .kumon-bs-btn { width: 100%; padding: 10px 14px; background: #02497e; color: #fff; border: 1px solid #013257; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
+            .kumon-bs-btn:hover { background: #013257; }
+            .kumon-bs-result { font-size: 12px; margin-top: 8px; min-height: 1.4em; color: #333; }
+            .kumon-bs-details { margin-top: 10px; border: 1px solid #d0dde2; border-radius: 8px; overflow: hidden; background: #fff; }
+            .kumon-bs-details summary { padding: 6px 10px; font-size: 11px; font-weight: 600; cursor: pointer; background: #f0f4f6; color: #013257; }
+            .kumon-bs-textarea { width: 100%; min-height: 80px; margin: 6px 0; padding: 8px; font-size: 10px; font-family: monospace; background: #fff; color: #333; border: 1px solid #d0dde2; border-radius: 6px; resize: vertical; box-sizing: border-box; }
+            .kumon-bs-btn-secondary { width: 100%; padding: 8px; font-size: 12px; border-radius: 8px; border: 1px solid #02497e; background: #fff; color: #02497e; cursor: pointer; }
         `;
 
         document.head.appendChild(style);
@@ -2068,7 +2110,8 @@
         header.addEventListener('mousedown', (e) => {
             if (e.target.classList.contains('toggle-settings') ||
                 e.target.classList.contains('resize-handle') ||
-                (e.target.closest && e.target.closest('.header-buttons'))) {
+                e.target.id === 'kumon-tool-select' ||
+                (e.target.closest && (e.target.closest('.header-buttons') || e.target.closest('#kumon-tool-select')))) {
                 return;
             }
             isDragging = true;
@@ -2183,6 +2226,16 @@
         });
 
         loadStudyPlanPresets(renderStudyPlanPresets);
+        const toolSelect = document.getElementById('kumon-tool-select');
+        const panelGrader = document.getElementById('kumon-panel-grader');
+        const panelPresets = document.getElementById('kumon-panel-presets');
+        if (toolSelect && panelGrader && panelPresets) {
+            toolSelect.addEventListener('change', function() {
+                const v = toolSelect.value;
+                panelGrader.style.display = v === 'grader' ? 'block' : 'none';
+                panelPresets.style.display = v === 'presets' ? 'block' : 'none';
+            });
+        }
         document.getElementById('kumon-preset-add-btn').addEventListener('click', function() {
             const nameEl = document.getElementById('kumon-preset-name');
             const startEl = document.getElementById('kumon-preset-start');
@@ -2230,7 +2283,7 @@
         const btn = document.createElement('button');
         btn.id = 'kumon-extension-toggle-btn';
         btn.type = 'button';
-        btn.style.cssText = 'padding:6px 12px;font-size:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+        btn.style.cssText = 'padding:6px 12px;font-size:12px;border-radius:6px;border:1px solid #013257;background:#02497e;color:#fff;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(1,50,87,0.25);';
         function updateBtnText() { btn.textContent = extensionEnabled ? 'Disable Extension' : 'Enable Extension'; }
         updateBtnText();
         btn.addEventListener('click', () => {
