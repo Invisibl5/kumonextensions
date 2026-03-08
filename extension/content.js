@@ -1472,7 +1472,6 @@
         uiContainer.id = 'kumon-extensions-ui';
         uiContainer.innerHTML = `
             <div class="kumon-grader-header">
-                <h3>📌 Kumon Extensions</h3>
                 <select id="kumon-tool-select" class="kumon-tool-select" title="Switch tool">
                     <option value="grader">Auto Grader</option>
                     <option value="presets">Study plan presets</option>
@@ -2265,13 +2264,15 @@
     }
 
     function tearDownWorksheetSetter() {
-        document.querySelectorAll('.setting-container .options.setting-options .option[data-kumon-pattern]').forEach(el => el.remove());
+        document.querySelectorAll('[data-kumon-pattern]').forEach(el => el.remove());
         const styleEl = document.getElementById('kumon-ws-pattern-style');
         if (styleEl) styleEl.remove();
         window.__kumonWorksheetPerStudyHooked = false;
-        document.body.removeAttribute('data-kumon-ws-pattern');
+        if (document.body) {
+            document.body.removeAttribute('data-kumon-ws-pattern');
+            document.body.dataset.kumonWorksheetPattern = '';
+        }
         window.__kumonWorksheetPattern = undefined;
-        if (document.body) document.body.dataset.kumonWorksheetPattern = '';
     }
 
     function ensureToggleButton() {
